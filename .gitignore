@@ -1,0 +1,22 @@
+# 运行产物 / 日志
+*.log
+sim_*.jpg
+*_result.jpg
+__pycache__/
+*.pyc
+
+# 大文件（模型权重不进 git, 用 Releases 或网盘）
+*.onnx
+*.pt
+test_room.mp4
+*.mp4
+
+# 本地配置 / 敏感信息
+.env
+seats_*.json
+
+# IDE / 系统
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

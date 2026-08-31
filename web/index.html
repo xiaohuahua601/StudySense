@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>自习室监控中心</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    background: linear-gradient(160deg, #070d1a 0%, #0a1628 55%, #0d1f3c 100%);
+    color: #d6e4ff;
+    min-height: 100vh;
+    padding: 20px 28px 40px;
+  }
+
+  /* ---------- 顶栏 ---------- */
+  header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 14px 24px;
+    background: linear-gradient(90deg, rgba(16,42,84,.85), rgba(10,26,50,.85));
+    border: 1px solid #1e3a5f; border-radius: 12px;
+    margin-bottom: 20px;
+    position: relative; overflow: hidden;
+  }
+  header .title {
+    font-size: 26px; font-weight: 700; letter-spacing: 2px;
+    background: linear-gradient(90deg, #00d4ff, #7dc5ff, #00d4ff);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+  header .clock {
+    font-size: 20px; color: #00d4ff; font-variant-numeric: tabular-nums;
+    text-shadow: 0 0 12px rgba(0,212,255,.55);
+  }
+  .live-dot {
+    display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+    background: #00e676; margin-right: 8px;
+    box-shadow: 0 0 8px #00e676;
+    animation: pulse 1.6s infinite;
+  }
+  @keyframes pulse { 50% { opacity: .35; } }
+
+  /* ---------- KPI ---------- */
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 20px; }
+  .kpi {
+    background: linear-gradient(145deg, #10233f, #0c1b31);
+    border: 1px solid #1e3a5f; border-radius: 12px;
+    padding: 18px 22px; position: relative; overflow: hidden;
+  }
+  .kpi::after {
+    content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 4px;
+    background: linear-gradient(#00d4ff, #0066ff);
+  }
+  .kpi .kpi-label { font-size: 14px; color: #7dc5ff; margin-bottom: 8px; }
+  .kpi .kpi-value {
+    font-size: 34px; font-weight: 700; color: #fff;
+    text-shadow: 0 0 16px rgba(0,212,255,.35);
+    font-variant-numeric: tabular-nums;
+  }
+  .kpi .kpi-sub { font-size: 12px; color: #5a7fb5; margin-top: 4px; }
+
+  /* ---------- 主体 ---------- */
+  main { display: grid; grid-template-columns: 5fr 7fr; gap: 16px; }
+  .panel {
+    background: rgba(12, 27, 49, .92);
+    border: 1px solid #1e3a5f; border-radius: 12px; padding: 18px 20px;
+  }
+  .panel h2 {
+    font-size: 16px; color: #7dc5ff; letter-spacing: 1px;
+    margin-bottom: 14px; display: flex; align-items: center; gap: 8px;
+  }
+  .panel h2::before { content: "▍"; color: #00d4ff; }
+
+  /* 教室卡片 */
+  .room-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+  .room-card {
+    background: #0e2038; border: 1px solid #1e3a5f; border-radius: 10px;
+    padding: 14px 16px; cursor: pointer; transition: all .18s;
+  }
+  .room-card:hover { border-color: #00d4ff; transform: translateY(-2px); }
+  .room-card.selected {
+    border-color: #00d4ff;
+    box-shadow: 0 0 0 1px #00d4ff, 0 0 18px rgba(0,212,255,.25);
+  }
+  .room-card .r-name { font-size: 17px; font-weight: 600; color: #fff; }
+  .room-card .r-cid { font-size: 11px; color: #5a7fb5; margin: 2px 0 10px; }
+  .room-card .r-nums { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .room-card .r-nums small { font-size: 13px; color: #7dc5ff; font-weight: 400; }
+  .progress { height: 8px; background: #132a4a; border-radius: 4px; margin: 10px 0 8px; overflow: hidden; }
+  .progress > div { height: 100%; border-radius: 4px; transition: width .6s; }
+  .r-meta { font-size: 11px; color: #5a7fb5; display: flex; justify-content: space-between; }
+
+  .rate-hi  { color: #ff5252; } .bar-hi  { background: linear-gradient(90deg, #ff5252, #ff8a80); }
+  .rate-mid { color: #ffc107; } .bar-mid { background: linear-gradient(90deg, #ffc107, #ffe082); }
+  .rate-lo  { color: #00e676; } .bar-lo  { background: linear-gradient(90deg, #00e676, #69f0ae); }
+
+  /* 人数/空位统计卡 */
+  .count-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 18px; }
+  .count-card {
+    background: #0e2038; border: 1px solid #1e3a5f; border-radius: 10px;
+    padding: 14px 18px; text-align: center;
+  }
+  .count-card .c-label { font-size: 12px; color: #5a7fb5; margin-bottom: 6px; }
+  .count-card .c-value { font-size: 34px; font-weight: 800; color: #fff; line-height: 1.1; }
+  .count-card .c-sub { font-size: 11px; color: #5a7fb5; margin-top: 4px; }
+  .count-card.people .c-value { color: #00e676; text-shadow: 0 0 14px rgba(0,230,118,.45); }
+  .count-card.free .c-value { color: #40c4ff; text-shadow: 0 0 14px rgba(64,196,255,.45); }
+  .count-card.rate .c-value { color: #ffc107; }
+
+  #trendChart { width: 100%; height: 320px; }
+
+  /* 时长统计条 */
+  .dur-row { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; }
+  .dur-chip {
+    background: #0e2038; border: 1px solid #1e3a5f; border-radius: 8px;
+    padding: 8px 14px; font-size: 13px; color: #7dc5ff;
+  }
+  .dur-chip b { color: #fff; font-size: 17px; margin-left: 6px; }
+  .dur-chip.warn b { color: #ffc107; }
+
+  .empty { color: #5a7fb5; font-size: 14px; padding: 30px 0; text-align: center; }
+
+  footer { margin-top: 18px; text-align: center; font-size: 12px; color: #3d5f8f; }
+
+  /* ===== AI 问答助手（右侧抽屉） ===== */
+  #chatToggle {
+    position: fixed; right: 0; top: 42%; z-index: 60;
+    writing-mode: vertical-rl; letter-spacing: 4px;
+    background: linear-gradient(180deg, #0e2038, #14315a); color: #7dc5ff;
+    border: 1px solid #1e3a5f; border-right: none; border-radius: 10px 0 0 10px;
+    padding: 18px 8px; font-size: 13px; cursor: pointer; user-select: none;
+    transition: all .25s;
+  }
+  #chatToggle:hover { color: #fff; background: linear-gradient(180deg, #14315a, #1a4070); }
+
+  #chatPanel {
+    position: fixed; right: -420px; top: 0; bottom: 0; width: 400px; z-index: 70;
+    background: rgba(8, 18, 34, .97); border-left: 1px solid #1e3a5f;
+    display: flex; flex-direction: column; transition: right .35s;
+  }
+  #chatPanel.open { right: 0; }
+  .chat-head {
+    padding: 14px 18px; border-bottom: 1px solid #1e3a5f;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .chat-head h3 { margin: 0; font-size: 15px; color: #fff; }
+  .chat-head h3 span { font-size: 11px; color: #5a7fb5; font-weight: 400; margin-left: 8px; }
+  .chat-close { background: none; border: none; color: #5a7fb5; font-size: 20px; cursor: pointer; }
+  .chat-close:hover { color: #fff; }
+
+  #chatMsgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
+  #chatMsgs::-webkit-scrollbar { width: 6px; }
+  #chatMsgs::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
+
+  .msg { max-width: 92%; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: #14315a; color: #d6ecff; border: 1px solid #1e4d80; }
+  .msg.bot { align-self: flex-start; background: #0e2038; color: #c8dff5; border: 1px solid #1e3a5f; }
+  .msg.bot .sql-toggle { display: inline-block; margin-top: 6px; font-size: 11px; color: #5a7fb5; cursor: pointer; text-decoration: underline dotted; }
+  .msg.bot pre { margin: 6px 0 0; background: #081222; border: 1px solid #16304f; border-radius: 6px; padding: 8px; font-size: 11px; color: #69f0ae; overflow-x: auto; white-space: pre; }
+  .msg.err { border-color: #ff5252; color: #ff8a80; }
+
+  .chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid #1e3a5f; }
+  .chat-input input {
+    flex: 1; background: #0e2038; border: 1px solid #1e3a5f; border-radius: 8px;
+    color: #d6ecff; padding: 10px 12px; font-size: 13px; outline: none;
+  }
+  .chat-input input:focus { border-color: #40c4ff; }
+  .chat-input button {
+    background: linear-gradient(135deg, #14315a, #1a4070); color: #7dc5ff;
+    border: 1px solid #1e4d80; border-radius: 8px; padding: 0 16px;
+    font-size: 13px; cursor: pointer;
+  }
+  .chat-input button:hover { color: #fff; }
+  .chat-input button:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* ===== 实时感: 变化闪烁 / 涨跌角标 / 心跳条 ===== */
+  @keyframes valFlash {
+    0% { text-shadow: 0 0 18px #40c4ff; color: #fff; transform: scale(1.15); }
+    100% { text-shadow: none; color: inherit; transform: scale(1); }
+  }
+  .flash { animation: valFlash 1.2s ease-out; display: inline-block; }
+
+  @keyframes cardPulse {
+    0% { box-shadow: 0 0 0 1px #40c4ff, 0 0 24px rgba(64,196,255,.45); transform: translateY(-2px); }
+    100% { box-shadow: 0 0 0 1px #1e3a5f; transform: none; }
+  }
+  .room-card.pulse { animation: cardPulse 1.4s ease-out; }
+
+  .delta { display: inline-block; margin-left: 6px; padding: 0 6px; border-radius: 8px;
+           font-size: 11px; font-weight: 600; vertical-align: middle; }
+  .delta.up { background: rgba(255,171,64,.15); color: #ffb74d; border: 1px solid #ff9800; }
+  .delta.down { background: rgba(77,208,225,.12); color: #4dd0e1; border: 1px solid #26c6da; }
+
+  /* 顶栏刷新心跳条: 5s 一个周期 */
+  #heartbeat { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; }
+  #heartbeat .hb-bar {
+    height: 100%; width: 0;
+    background: linear-gradient(90deg, transparent, #40c4ff);
+    animation: hb 5s linear infinite;
+  }
+  @keyframes hb { 0% { width: 0; } 100% { width: 100%; } }
+
+  .r-upd.fresh { color: #69f0ae; }
+  .r-upd.stale { color: #ff8a80; }
+
+  /* 摄像头异常告警条 */
+  #alertBar {
+    display: none; align-items: center; gap: 10px;
+    background: rgba(255,82,82,.12); border: 1px solid #ff5252; border-radius: 8px;
+    padding: 10px 16px; margin-bottom: 16px; font-size: 13px; color: #ff8a80;
+  }
+  #alertBar.show { display: flex; }
+  #alertBar .a-icon { font-size: 16px; }
+  #alertBar .a-list { flex: 1; }
+  #alertBar .a-item { display: flex; gap: 8px; padding: 2px 0; }
+  #alertBar .a-time { color: #ff8a80; opacity: .7; font-size: 12px; }
+  #alertBar .a-msg.recov { color: #69f0ae; }
+
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } .kpi-row { grid-template-columns: repeat(2, 1fr); } }
+</style>
+</head>
+<body>
+
+<!-- AI 问答助手（右侧抽屉） -->
+<div id="chatToggle">AI 问答助手</div>
+<div id="chatPanel">
+  <div class="chat-head">
+    <h3>💬 数据问答助手<span>Text2SQL · 本地大模型</span></h3>
+    <button class="chat-close" id="chatClose">×</button>
+  </div>
+  <div id="chatMsgs">
+    <div class="msg bot">你好, 我可以查询自习室数据。试试问:<br>· 今天几点人最少?<br>· 哪个教室累计在座时间最长?<br>· 最近有哪些摄像头告警?</div>
+  </div>
+  <div class="chat-input">
+    <input id="chatInput" type="text" placeholder="输入问题, 回车发送..." maxlength="200">
+    <button id="chatSend">发送</button>
+  </div>
+</div>
+
+<header>
+  <div class="title"><span class="live-dot"></span>自习室监控中心</div>
+  <div class="clock" id="clock">--:--:--</div>
+  <div id="heartbeat"><div class="hb-bar"></div></div>
+</header>
+
+<div id="alertBar">
+  <span class="a-icon">⚠</span>
+  <div class="a-list" id="alertList"></div>
+</div>
+
+<section class="kpi-row">
+  <div class="kpi">
+    <div class="kpi-label">监控教室</div>
+    <div class="kpi-value" id="kpiRooms">--</div>
+    <div class="kpi-sub">实时在线</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">当前总人数</div>
+    <div class="kpi-value" id="kpiHeads">--</div>
+    <div class="kpi-sub" id="kpiHeadsSub">--</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">占用座位</div>
+    <div class="kpi-value" id="kpiOcc">--</div>
+    <div class="kpi-sub" id="kpiOccSub">-- / --</div>
+  </div>
+  <div class="kpi">
+    <div class="kpi-label">总占用率</div>
+    <div class="kpi-value" id="kpiRate">--</div>
+    <div class="kpi-sub">全教室汇总</div>
+  </div>
+</section>
+
+<main>
+  <div class="panel">
+    <h2>各教室实时状态 <span style="font-weight:400;font-size:12px;color:#5a7fb5">（点击查看详情）</span></h2>
+    <div id="roomGrid" class="room-grid"><div class="empty">加载中...</div></div>
+  </div>
+
+  <div class="panel">
+    <h2 id="detailTitle">教室详情</h2>
+    <div class="count-cards" id="countCards">
+      <div class="count-card people"><div class="c-label">在座人数</div><div class="c-value" id="ccPeople">--</div><div class="c-sub">跟踪确认后的人数</div></div>
+      <div class="count-card free"><div class="c-label">空余座位</div><div class="c-value" id="ccFree">--</div><div class="c-sub" id="ccFreeSub">-- / -- 座</div></div>
+      <div class="count-card rate"><div class="c-label">占用率</div><div class="c-value" id="ccRate">--</div><div class="c-sub">人数 / 总座位</div></div>
+    </div>
+    <div class="dur-row" id="durRow"></div>
+    <div id="trendChart"></div>
+  </div>
+</main>
+
+<footer>数据每 5 秒自动刷新 · 数据源 /api/overview</footer>
+
+<script>
+const API = "";
+let selectedCam = null;
+let trendChart = null;
+let trendX = [];             // 趋势图 x 轴标签
+let trendHeads = [];         // 检测人数序列
+let trendOcc = [];           // 占用序列
+
+/* ---------- 时钟 ---------- */
+setInterval(() => {
+  const n = new Date();
+  document.getElementById("clock").textContent =
+    n.toLocaleDateString("zh-CN") + " " + n.toLocaleTimeString("zh-CN", {hour12: false});
+}, 1000);
+
+/* ---------- 工具 ---------- */
+function rateClass(r) { return r >= 0.7 ? "hi" : r >= 0.3 ? "mid" : "lo"; }
+
+/* ---------- 摄像头异常告警 ---------- */
+async function refreshAlerts() {
+  const bar = document.getElementById("alertBar");
+  const list = document.getElementById("alertList");
+  try {
+    const r = await fetch(`${API}/api/alerts?hours=1`);
+    if (!r.ok) return;
+    const alerts = await r.json();
+    if (!alerts.length) { bar.classList.remove("show"); return; }
+    const recent = alerts.slice(0, 5);   // 最多展示 5 条
+    list.innerHTML = recent.map(a => {
+      const t = a.ts ? String(a.ts).slice(11, 19) : "--";
+      const cls = a.alert_type === "recovered" ? "recov" : "";
+      const tag = a.alert_type === "blocked" ? "遮挡" :
+                  a.alert_type === "moved" ? "移动" : "恢复";
+      return `<div class="a-item"><span class="a-time">${t}</span>
+              <span class="a-msg ${cls}">[${a.camera_id}] ${tag} · ${a.message}</span></div>`;
+    }).join("");
+    bar.classList.add("show");
+  } catch {}
+}
+
+/* 分钟数 -> "2时15分" / "45分" */
+function fmtDur(minutes) {
+  const m = Math.round(minutes);
+  if (m < 60) return m + "分";
+  return Math.floor(m / 60) + "时" + (m % 60) + "分";
+}
+
+/* ---------- 总览（带变化感知: 闪烁/涨跌角标/相对时间） ---------- */
+let prevSnap = null;          // 上一轮快照 { heads, rooms: {cam: count} }
+const roomUpdAt = {};         // cam -> 上报时间 epoch
+
+function deltaBadge(d) {
+  if (d > 0) return `<span class="delta up">▲ +${d}</span>`;
+  if (d < 0) return `<span class="delta down">▼ ${d}</span>`;
+  return "";
+}
+
+async function refreshOverview() {
+  let data;
+  try {
+    const r = await fetch(`${API}/api/overview`);
+    if (!r.ok) throw 0;
+    data = await r.json();
+  } catch {
+    document.getElementById("roomGrid").innerHTML = '<div class="empty">后端不可达，请启动 server.py</div>';
+    return;
+  }
+
+  const s = data.summary;
+  const dHeads = prevSnap ? s.total_heads - prevSnap.heads : 0;
+  const dOcc = prevSnap ? s.total_occupied - prevSnap.occ : 0;
+
+  const setKpi = (id, val, changed) => {
+    const el = document.getElementById(id);
+    el.textContent = val;
+    el.classList.remove("flash");
+    if (changed) { void el.offsetWidth; el.classList.add("flash"); }  // 重启动画
+  };
+  setKpi("kpiRooms", s.room_count, prevSnap && s.room_count !== prevSnap.roomCount);
+  setKpi("kpiHeads", s.total_heads, dHeads !== 0);
+  setKpi("kpiOcc", s.total_occupied, dOcc !== 0);
+  setKpi("kpiRate", (s.occupancy_rate * 100).toFixed(1) + "%",
+         prevSnap && Math.abs(s.occupancy_rate - prevSnap.rate) > 1e-6);
+  document.getElementById("kpiHeadsSub").innerHTML =
+    prevSnap ? `较上次 ${dHeads >= 0 ? "+" : ""}<b style="color:${dHeads > 0 ? "#ffb74d" : dHeads < 0 ? "#4dd0e1" : "#5a7fb5"}">${dHeads}</b>` : "检测头数合计";
+  document.getElementById("kpiOccSub").textContent = `${s.total_occupied} / ${s.total_seats} 座位`;
+
+  const grid = document.getElementById("roomGrid");
+  if (!data.rooms.length) {
+    grid.innerHTML = '<div class="empty">暂无教室数据，请用 edge_agent.py 上报</div>';
+    prevSnap = null;
+    return;
+  }
+
+  grid.innerHTML = data.rooms.map(room => {
+    const cls = rateClass(room.occupancy_rate);
+    const prevCount = prevSnap ? (prevSnap.rooms[room.camera_id] ?? null) : null;
+    const d = prevCount === null ? 0 : room.head_count - prevCount;
+    const pulse = d !== 0 ? "pulse" : "";
+    // 记录上报时间, 相对时间由 1s 定时器刷新
+    if (room.last_update) roomUpdAt[room.camera_id] = new Date(room.last_update).getTime();
+    const updHtml = room.last_update
+      ? `<span class="r-upd" data-cam="${room.camera_id}">刚刚</span>`
+      : `<span class="r-upd stale" data-cam="${room.camera_id}">未上报</span>`;
+    return `
+      <div class="room-card ${room.camera_id === selectedCam ? "selected" : ""} ${pulse}"
+           onclick="selectRoom('${room.camera_id}')">
+        <div class="r-name">${room.name}</div>
+        <div class="r-cid">${room.camera_id}${room.location ? " · " + room.location : ""}</div>
+        <div class="r-nums rate-${cls}">${room.occupied_count}<small> / ${room.total_seats} 座</small></div>
+        <div class="progress"><div class="bar-${cls}" style="width:${(room.occupancy_rate * 100).toFixed(0)}%"></div></div>
+        <div class="r-meta"><span>人数 ${room.head_count}${deltaBadge(d)}</span><span>${(room.occupancy_rate * 100).toFixed(0)}%</span><span>${updHtml}</span></div>
+      </div>`;
+  }).join("");
+
+  // 保存本轮快照
+  prevSnap = {
+    heads: s.total_heads, occ: s.total_occupied,
+    rate: s.occupancy_rate, roomCount: s.room_count,
+    rooms: Object.fromEntries(data.rooms.map(r => [r.camera_id, r.head_count])),
+  };
+
+  // 未选择时默认选第一间
+  if (!selectedCam || !data.rooms.find(r => r.camera_id === selectedCam)) {
+    selectRoom(data.rooms[0].camera_id);
+  }
+}
+
+/* 相对时间: 每秒刷新 "N秒前"（监控页"活着"的关键信号） */
+function tickRelTime() {
+  const now = Date.now();
+  document.querySelectorAll(".r-upd[data-cam]").forEach(el => {
+    const t = roomUpdAt[el.dataset.cam];
+    if (!t) return;
+    const sec = Math.round((now - t) / 1000);
+    el.classList.toggle("fresh", sec <= 10);
+    el.classList.toggle("stale", sec > 60);
+    el.textContent = sec < 5 ? "刚刚" : sec < 60 ? `${sec}秒前`
+                    : sec < 3600 ? `${Math.floor(sec / 60)}分钟前` : "超过1小时";
+  });
+}
+setInterval(tickRelTime, 1000);
+
+/* ---------- 教室详情 ---------- */
+async function selectRoom(cameraId) {
+  selectedCam = cameraId;
+  document.querySelectorAll(".room-card").forEach(el => {
+    el.classList.toggle("selected", el.getAttribute("onclick").includes(cameraId));
+  });
+  document.getElementById("detailTitle").textContent = `教室详情 · ${cameraId}`;
+
+  // 实时统计（人数 / 空位 / 占用率; 未上报教室显示 0 与提示）
+  try {
+    const nameEl = document.querySelector(`.room-card.selected .r-name`);
+    document.getElementById("detailTitle").textContent =
+      `教室详情 · ${nameEl ? nameEl.textContent : cameraId}`;
+    const r = await fetch(`${API}/api/stats?camera_id=${encodeURIComponent(cameraId)}`);
+    if (r.ok) {
+      const st = await r.json();
+      const free = Math.max(st.total_seats - st.occupied_count, 0);
+      // 变化闪烁: 与上次值比较
+      const flashIf = (id, val) => {
+        const el = document.getElementById(id);
+        const changed = el.dataset.prev !== undefined && el.dataset.prev !== String(val);
+        el.textContent = val;
+        el.dataset.prev = val;
+        el.classList.remove("flash");
+        if (changed) { void el.offsetWidth; el.classList.add("flash"); }
+      };
+      flashIf("ccPeople", st.head_count);
+      flashIf("ccFree", free);
+      flashIf("ccRate", (st.occupancy_rate * 100).toFixed(1) + "%");
+      document.getElementById("ccFreeSub").textContent = `${st.occupied_count} / ${st.total_seats} 座`;
+    } else if (r.status === 404) {
+      // 已注册但从未上报: 从 overview 取座位数展示空教室
+      const ov = await (await fetch(`${API}/api/overview`)).json();
+      const room = ov.rooms.find(x => x.camera_id === cameraId);
+      const total = room ? room.total_seats : 0;
+      document.getElementById("ccPeople").textContent = 0;
+      document.getElementById("ccFree").textContent = total;
+      document.getElementById("ccFreeSub").textContent = `0 / ${total} 座 · 等待上报`;
+      document.getElementById("ccRate").textContent = "0%";
+    }
+  } catch {}
+
+  // 时长统计（会话级）
+  try {
+    const r = await fetch(`${API}/api/duration?camera_id=${encodeURIComponent(cameraId)}`);
+    if (r.ok) {
+      const d = await r.json();
+      const o = d.overall;
+      const chips = [];
+      if (o.session_count > 0) {
+        chips.push(`<span class="dur-chip">今日会话<b>${o.session_count}</b></span>`);
+        chips.push(`<span class="dur-chip">人均在座<b>${fmtDur(o.avg_minutes)}</b></span>`);
+        chips.push(`<span class="dur-chip">累计在座<b>${fmtDur(o.total_minutes)}</b></span>`);
+      } else {
+        chips.push(`<span class="dur-chip">今日暂无完整在座会话</span>`);
+      }
+      document.getElementById("durRow").innerHTML = chips.join("");
+    }
+  } catch {}
+
+  // 24h 曲线（切换教室: 全量初始化, 之后由 2.5s 定时器流式追加）
+  try {
+    trendX = []; trendHeads = []; trendOcc = [];   // 切换教室清空旧序列
+    const r = await fetch(`${API}/api/history?hours=24&camera_id=${encodeURIComponent(cameraId)}`);
+    if (r.ok) {
+      const d = await r.json();
+      renderTrend(d.points || [], false);
+    }
+  } catch {}
+}
+
+/* ---------- 趋势图（流式动态） ---------- */
+const TREND_MAX = 60;         // 最多显示 60 个点（超过后滑窗丢弃最旧的, 产生"滚动"感）
+
+function renderTrend(points, appendMode) {
+  if (!trendChart) {
+    trendChart = echarts.init(document.getElementById("trendChart"));
+    window.addEventListener("resize", () => trendChart && trendChart.resize());
+  }
+
+  if (appendMode) {
+    // 流式追加: 只补新点, 不整批重设 → 平滑过渡动画
+    const lastTs = trendX[trendX.length - 1];
+    for (const p of points) {
+      const label = p.ts.slice(11, 16);
+      if (label === lastTs) {          // 同一分钟: 更新最后一个点的值（ refining）
+        trendHeads[trendHeads.length - 1] = p.head_count;
+        trendOcc[trendOcc.length - 1] = p.occupied_count;
+      } else {
+        trendX.push(label);
+        trendHeads.push(p.head_count);
+        trendOcc.push(p.occupied_count);
+      }
+    }
+    while (trendX.length > TREND_MAX) { trendX.shift(); trendHeads.shift(); trendOcc.shift(); }
+  } else {
+    // 首次加载 / 切换教室: 整批初始化
+    trendX = points.map(p => p.ts.slice(11, 16));
+    trendHeads = points.map(p => p.head_count);
+    trendOcc = points.map(p => p.occupied_count);
+  }
+
+  // 呼吸光点 effect: 只亮最后一个点
+  const mkSeries = (name, color, areaColor, data) => ({
+    name, type: "line", smooth: true, data,
+    lineStyle: { color, width: 2.5 },
+    itemStyle: { color },
+    showSymbol: false,
+    areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+      colorStops: [{ offset: 0, color: areaColor }, { offset: 1, color: "rgba(0,0,0,0)" }] } },
+    emphasis: { focus: "series" },
+  });
+
+  trendChart.setOption({
+    backgroundColor: "transparent",
+    animationDuration: 600,
+    animationDurationUpdate: 600,      // 数据更新时过渡动画（流式滑入的关键）
+    animationEasingUpdate: "linear",
+    tooltip: { trigger: "axis", backgroundColor: "#10233f", borderColor: "#1e3a5f", textStyle: { color: "#d6e4ff" } },
+    legend: { data: ["检测人数", "占用座位"], textStyle: { color: "#7dc5ff" }, top: 0 },
+    grid: { left: 40, right: 24, top: 34, bottom: 26 },
+    xAxis: {
+      type: "category", data: trendX, boundaryGap: false,
+      axisLine: { lineStyle: { color: "#1e3a5f" } },
+      axisLabel: { color: "#5a7fb5" },
+    },
+    yAxis: {
+      type: "value", minInterval: 1,
+      axisLine: { show: false }, splitLine: { lineStyle: { color: "#132a4a" } },
+      axisLabel: { color: "#5a7fb5" },
+    },
+    series: [
+      { ...mkSeries("检测人数", "#00d4ff", "rgba(0,212,255,.35)", trendHeads),
+        markPoint: {                        // 末端呼吸光点
+          symbol: "circle", symbolSize: 6, itemStyle: { color: "#00d4ff" },
+          data: [{ coord: [trendX.length - 1, trendHeads[trendHeads.length - 1]], value: "" }],
+          animation: true,
+        } },
+      { ...mkSeries("占用座位", "#00e676", "rgba(0,230,118,.30)", trendOcc),
+        markPoint: {
+          symbol: "circle", symbolSize: 6, itemStyle: { color: "#00e676" },
+          data: [{ coord: [trendX.length - 1, trendOcc[trendOcc.length - 1]], value: "" }],
+          animation: true,
+        } },
+    ],
+  });
+}
+
+/* 曲线独立高频刷新: 2.5 秒一次（比主刷新快一倍, 增强动态感） */
+setInterval(async () => {
+  if (!selectedCam || !trendChart) return;
+  try {
+    const r = await fetch(`${API}/api/history?hours=1&camera_id=${encodeURIComponent(selectedCam)}`);
+    if (!r.ok) return;
+    const d = await r.json();
+    const pts = d.points || [];
+    if (pts.length) renderTrend(pts.slice(-6), true);   // 只取最近几个点做增量
+  } catch {}
+}, 2500);
+
+/* ---------- 启动 ---------- */
+/* ---------- AI 问答助手（Text2SQL + Ollama） ---------- */
+const chatPanel = document.getElementById("chatPanel");
+const chatMsgs = document.getElementById("chatMsgs");
+const chatInput = document.getElementById("chatInput");
+const chatSend = document.getElementById("chatSend");
+
+document.getElementById("chatToggle").onclick = () =>
+  chatPanel.classList.add("open");
+document.getElementById("chatClose").onclick = () =>
+  chatPanel.classList.remove("open");
+
+function appendMsg(cls, text, sql) {
+  const div = document.createElement("div");
+  div.className = "msg " + cls;
+  div.textContent = text;
+  if (sql) {
+    const t = document.createElement("span");
+    t.className = "sql-toggle";
+    t.textContent = "查看SQL";
+    t.onclick = () => {
+      const pre = div.querySelector("pre");
+      if (pre) { pre.remove(); t.textContent = "查看SQL"; }
+      else {
+        const p = document.createElement("pre");
+        p.textContent = sql;
+        div.appendChild(p);
+        t.textContent = "收起SQL";
+      }
+    };
+    div.appendChild(t);
+  }
+  chatMsgs.appendChild(div);
+  chatMsgs.scrollTop = chatMsgs.scrollHeight;
+  return div;
+}
+
+async function sendChat() {
+  const q = chatInput.value.trim();
+  if (!q) return;
+  chatInput.value = "";
+  appendMsg("user", q);
+  chatSend.disabled = true;
+
+  const thinking = appendMsg("bot", "AI 查询中, 约 5~20 秒...");
+  try {
+    // 若当前在教室详情页, 自动限定该教室
+    const cam = selectedCam || null;
+    const r = await fetch(`${API}/api/ask`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question: q, camera_id: cam }),
+    });
+    const d = await r.json();
+    thinking.remove();
+    if (r.ok) {
+      appendMsg("bot", d.answer, d.sql);
+    } else {
+      appendMsg("bot err", d.detail || `查询失败(${r.status_code})`);
+    }
+  } catch (e) {
+    thinking.remove();
+    appendMsg("bot err", "请求失败: " + e.message);
+  } finally {
+    chatSend.disabled = false;
+    chatInput.focus();
+  }
+}
+
+chatSend.onclick = sendChat;
+chatInput.addEventListener("keydown", e => {
+  if (e.key === "Enter") sendChat();
+});
+
+refreshOverview();
+refreshAlerts();
+setInterval(refreshOverview, 5000);
+setInterval(refreshAlerts, 5000);
+</script>
+</body>
+</html>
