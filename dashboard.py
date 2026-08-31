@@ -192,6 +192,15 @@ def render_simulate():
     if st.button("⬅ 返回总览"):
         st.query_params.clear()
         st.rerun()
+    # Docker 部署时容器内没有 edge_agent.py（依赖 OpenCV + ONNX 模型）
+    if not os.path.exists(os.path.join(os.path.dirname(os.path.abspath(__file__)), "edge_agent.py")):
+        st.warning("当前运行在 Docker 容器中，模拟测试不可用。\n\n"
+                   "请在宿主机本地运行 edge_agent.py 上报到 "
+                   f"`{API_BASE}`（端口已映射到宿主机），效果相同：\n\n"
+                   "```\n"
+                   "python edge_agent.py --source test_room.mp4 --camera-id room_201 --interval 10\n"
+                   "```")
+        return
     st.title("🎬 模拟测试")
     st.caption("用视频或摄像头模拟某间教室的实时人流, 验证检测/跟踪/上报/大屏全链路")
 

@@ -1,0 +1,75 @@
+services:
+  # ---------- 后端 API + 可视化大屏 ----------
+  api:
+    build: .
+    container_name: studysense-api
+    ports:
+      - "8000:8000"
+    environment:
+      TZ: Asia/Shanghai           # datetime.now() 用本地时间, 避免时间戳偏 8 小时
+      MYSQL_HOST: db              # 容器网络内的 MySQL 服务名
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 里设置 MYSQL_PASSWORD}
+      MYSQL_DATABASE: study_room
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # ---------- MySQL 数据库 ----------
+  db:
+    image: mysql:8.0
+    container_name: studysense-db
+    environment:
+      TZ: Asia/Shanghai
+      MYSQL_ROOT_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 里设置 MYSQL_PASSWORD}
+      MYSQL_DATABASE: study_room
+    ports:
+      - "3307:3306"               # 宿主机 3307 避开本机已装的 MySQL 8.0(3306)
+    volumes:
+      - db_data:/var/lib/mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-time-zone=+08:00
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # ---------- Streamlit 管理页 ----------
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile.dashboard
+    container_name: studysense-dashboard
+    ports:
+      - "8501:8501"
+    environment:
+      TZ: Asia/Shanghai
+      API_BASE: http://api:8000    # 容器网络内通过服务名访问后端
+      MYSQL_HOST: db
+      MYSQL_PORT: "3306"
+      MYSQL_USER: root
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 里设置 MYSQL_PASSWORD}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # ---------- Ollama 大模型服务 ----------
+  ollama:
+    image: ollama/ollama:latest
+    container_name: studysense-ollama
+    volumes:
+      # 直接挂载宿主机模型目录, 复用本地已下载的 qwen2.5:7b-instruct-q4_K_M, 免二次下载
+      - ${USERPROFILE}/.ollama:/root/.ollama
+    # GPU 加速（Docker Desktop + WSL2 后端；若无法启动则删除此行回退 CPU）
+    gpus: all
+    restart: unless-stopped
+
+volumes:
+  db_data:

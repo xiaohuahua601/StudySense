@@ -14,6 +14,7 @@ test_room.mp4
 # 本地配置 / 敏感信息
 .env
 seats_*.json
+cam_test_*.log
 
 # IDE / 系统
 .idea/
