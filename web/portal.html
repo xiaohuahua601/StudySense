@@ -1,0 +1,1209 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StudySense 管理门户</title>
+<link rel="icon" type="image/svg+xml" href="logo.svg">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    color: #d6ecff; overflow-x: hidden;
+    background: radial-gradient(1200px 700px at 75% -10%, #0c2a55 0%, transparent 60%),
+                radial-gradient(900px 600px at -10% 110%, #0a2440 0%, transparent 55%),
+                linear-gradient(160deg, #060d1c 0%, #081428 55%, #061020 100%);
+    background-attachment: fixed;
+  }
+  #bg { position: fixed; inset: 0; z-index: 0; }
+  .wrap { position: relative; z-index: 1; max-width: 1280px; margin: 0 auto; padding: 20px 24px 60px; }
+
+  /* ============ 通用组件 ============ */
+  .btn {
+    position: relative; overflow: hidden;
+    background: linear-gradient(135deg, #0e4d8a, #0a3d7a);
+    color: #d6ecff; border: 1px solid #1e5f9e; border-radius: 8px;
+    padding: 9px 18px; font-size: 14px; cursor: pointer;
+    transition: transform .18s, box-shadow .18s, background .18s;
+  }
+  .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 18px rgba(0,180,255,.35); background: linear-gradient(135deg, #1462ad, #0d4c92); }
+  .btn:active { transform: translateY(0); }
+  .btn.primary { background: linear-gradient(135deg, #0084d4, #00d4ff); border: none; color: #03101f; font-weight: 600; }
+  .btn.primary:hover { box-shadow: 0 6px 22px rgba(0,212,255,.5); }
+  .btn.danger { background: linear-gradient(135deg, #7a1030, #a1173c); border-color: #a1173c; }
+  .btn.danger:hover { box-shadow: 0 6px 18px rgba(255,82,82,.35); }
+  .btn.ghost { background: rgba(20,45,80,.4); }
+  .btn.sm { padding: 5px 12px; font-size: 12px; border-radius: 6px; }
+
+  .ripple { position: absolute; border-radius: 50%;
+    background: radial-gradient(circle, rgba(140,220,255,.45), rgba(140,220,255,.08));
+    transform: scale(0); animation: rip .65s ease-out forwards; pointer-events: none; }
+  @keyframes rip { to { transform: scale(3); opacity: 0; } }
+
+  input, select {
+    width: 100%; padding: 10px 14px; font-size: 14px; color: #d6ecff;
+    background: rgba(10,28,52,.75); border: 1px solid #1e3a5f; border-radius: 8px;
+    outline: none; transition: border-color .25s, box-shadow .25s;
+  }
+  input:focus, select:focus { border-color: #00b3e6; box-shadow: 0 0 0 3px rgba(0,180,255,.18); }
+  input::placeholder { color: #4a6a96; }
+  label { display: block; font-size: 12px; color: #7dc5ff; margin: 14px 0 6px; }
+  select option { background: #0a182e; }
+
+  .panel {
+    background: rgba(10, 24, 46, .72); backdrop-filter: blur(10px);
+    border: 1px solid #16355c; border-radius: 14px; padding: 18px;
+    box-shadow: 0 10px 34px rgba(0,0,0,.35);
+    position: relative; overflow: hidden;
+    animation: panelIn .5s cubic-bezier(.2,.9,.3,1) both;
+  }
+  .panel::after {
+    content: ""; position: absolute; top: 0; left: -70%; width: 45%; height: 100%;
+    background: linear-gradient(105deg, transparent, rgba(120,200,255,.06), transparent);
+    transform: skewX(-20deg); animation: sweep 9s ease-in-out infinite; pointer-events: none;
+  }
+  @keyframes sweep { 0%, 60% { left: -70%; } 100% { left: 135%; } }
+  @keyframes panelIn { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+
+  /* ============ 登录/注册（左右分栏） ============ */
+  #authView { min-height: 100vh; display: none; align-items: center; justify-content: center; position: relative; z-index: 1; padding: 24px; gap: 46px; }
+  .auth-left { width: 460px; max-width: 44vw; }
+  .auth-hero-title { font-size: 42px; font-weight: 800; letter-spacing: 3px; line-height: 1.25; }
+  .auth-hero-sub { color: #7dc5ff; font-size: 15px; margin: 14px 0 30px; line-height: 1.8; }
+  .feat { display: flex; gap: 14px; align-items: flex-start; padding: 13px 16px; border-radius: 12px;
+    background: rgba(10, 24, 46, .55); border: 1px solid #16355c; margin-bottom: 12px;
+    transition: transform .25s, border-color .25s, box-shadow .25s; }
+  .feat:hover { transform: translateX(6px); border-color: #1e6aad; box-shadow: 0 6px 22px rgba(0,160,255,.18); }
+  .feat .f-icon { font-size: 22px; filter: drop-shadow(0 0 8px rgba(0,212,255,.6)); }
+  .feat .f-t { font-size: 14px; color: #fff; font-weight: 600; }
+  .feat .f-d { font-size: 12px; color: #7dc5ff; margin-top: 3px; line-height: 1.6; }
+  .auth-hero-stat { display: flex; gap: 26px; margin-top: 24px; }
+  .hs-item .hs-v { font-size: 24px; font-weight: 700; color: #00d4ff; text-shadow: 0 0 16px rgba(0,212,255,.5); font-variant-numeric: tabular-nums; }
+  .hs-item .hs-l { font-size: 11px; color: #5a7fb5; margin-top: 2px; }
+  .auth-card {
+    width: 400px; max-width: 94vw; padding: 38px 36px 30px;
+    animation: cardFloat 6s ease-in-out infinite;
+  }
+  @keyframes cardFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+  .auth-logo { text-align: center; margin-bottom: 6px; font-size: 30px; }
+  .auth-title { text-align: center; font-size: 26px; font-weight: 700; letter-spacing: 2px; margin-bottom: 4px;
+    background: linear-gradient(90deg, #00d4ff, #7df9ff, #00e676, #00d4ff);
+    background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: neonFlow 6s linear infinite; }
+  @keyframes neonFlow { to { background-position: 300% 0; } }
+  .auth-sub { text-align: center; color: #5a7fb5; font-size: 12px; margin-bottom: 22px; }
+  .auth-tabs { display: flex; position: relative; background: rgba(10,28,52,.6); border-radius: 9px; padding: 4px; margin-bottom: 8px; }
+  .auth-tabs .tab {
+    flex: 1; text-align: center; padding: 9px 0; font-size: 14px; cursor: pointer; color: #7dc5ff;
+    border-radius: 7px; transition: color .25s; z-index: 1; user-select: none;
+  }
+  .auth-tabs .tab.on { color: #fff; }
+  .auth-tabs .slider {
+    position: absolute; top: 4px; bottom: 4px; width: calc(50% - 4px);
+    background: linear-gradient(135deg, #0e5f9e, #0a4c86); border-radius: 7px;
+    transition: transform .3s cubic-bezier(.3,1.3,.4,1); box-shadow: 0 2px 12px rgba(0,160,255,.35);
+  }
+  .auth-tabs.reg .slider { transform: translateX(100%); }
+  .auth-hint { margin-top: 16px; text-align: center; font-size: 12px; color: #5a7fb5; line-height: 1.7; }
+  .auth-hint b { color: #ffc107; }
+  .form-err { color: #ff8a80; font-size: 12px; min-height: 18px; margin-top: 10px; text-align: center; }
+  .btn-auth { width: 100%; margin-top: 18px; padding: 12px; font-size: 15px; letter-spacing: 4px; }
+  .btn-auth:disabled { opacity: .55; cursor: wait; }
+  .spin { display: inline-block; width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.35);
+    border-top-color: #fff; border-radius: 50%; animation: rot .7s linear infinite; vertical-align: -2px; margin-right: 6px; }
+  @keyframes rot { to { transform: rotate(360deg); } }
+
+  /* ============ 应用框架 ============ */
+  header.appbar {
+    display: flex; align-items: center; gap: 18px; margin-bottom: 18px;
+    padding: 14px 22px; border-radius: 14px;
+    background: rgba(10,24,46,.8); border: 1px solid #16355c; backdrop-filter: blur(10px);
+  }
+  .appbar .logo { font-size: 21px; font-weight: 700; letter-spacing: 1px;
+    background: linear-gradient(90deg, #00d4ff, #7df9ff, #00e676, #00d4ff);
+    background-size: 300% 100%; -webkit-background-clip: text; background-clip: text; color: transparent;
+    animation: neonFlow 6s linear infinite; white-space: nowrap; }
+  .appbar .spacer { flex: 1; }
+  .userchip { display: flex; align-items: center; gap: 9px; padding: 7px 14px;
+    background: rgba(20,45,80,.5); border: 1px solid #1e3a5f; border-radius: 999px; font-size: 13px; }
+  .role-badge { padding: 2px 9px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .role-badge.admin { background: rgba(255,193,7,.16); color: #ffc107; border: 1px solid rgba(255,193,7,.4); }
+  .role-badge.user { background: rgba(0,212,255,.14); color: #00d4ff; border: 1px solid rgba(0,212,255,.4); }
+
+  /* ============ 左侧导航栏 ============ */
+  .app-body { display: flex; gap: 20px; align-items: flex-start; }
+  nav.tabs {
+    width: 200px; flex-shrink: 0; position: sticky; top: 20px;
+    display: flex; flex-direction: column; gap: 8px;
+  }
+  nav.tabs .ntab {
+    padding: 12px 18px; border-radius: 10px; font-size: 14px; cursor: pointer; color: #7dc5ff;
+    background: rgba(10,24,46,.6); border: 1px solid #16355c; transition: all .22s; user-select: none;
+  }
+  nav.tabs .ntab:hover { color: #fff; transform: translateX(5px); border-color: #1e5f9e; }
+  nav.tabs .ntab.on {
+    color: #fff; background: linear-gradient(135deg, #0e5f9e, #0a4c86);
+    border-color: #2a7ec9; box-shadow: 0 4px 16px rgba(0,160,255,.3);
+  }
+  .main-col { flex: 1; min-width: 0; }
+  .view { display: none; }
+  .view.on { display: block; animation: viewIn .4s cubic-bezier(.2,.9,.3,1) both; }
+  @keyframes viewIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+  /* ============ KPI ============ */
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .kpi { position: relative; }
+  .kpi::before {
+    content: ""; position: absolute; inset: 0; border-radius: 14px;
+    background: radial-gradient(260px circle at var(--mx,50%) var(--my,50%), rgba(0,212,255,.13), transparent 55%);
+    opacity: 0; transition: opacity .3s; pointer-events: none;
+  }
+  .kpi:hover::before { opacity: 1; }
+  .kpi .k-label { font-size: 12px; color: #7dc5ff; }
+  .kpi .k-value { font-size: 30px; font-weight: 700; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+  .kpi .k-sub { font-size: 11px; color: #5a7fb5; }
+  .k-cyan .k-value { color: #00d4ff; text-shadow: 0 0 18px rgba(0,212,255,.5); }
+  .k-green .k-value { color: #00e676; text-shadow: 0 0 18px rgba(0,230,118,.5); }
+  .k-amber .k-value { color: #ffc107; text-shadow: 0 0 18px rgba(255,193,7,.45); }
+  .k-red .k-value { color: #ff5252; text-shadow: 0 0 18px rgba(255,82,82,.45); }
+
+  /* ============ 教室卡片 ============ */
+  .toolbar { display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .toolbar input[type=text] { width: 240px; }
+  .chip { padding: 7px 16px; border-radius: 999px; font-size: 13px; cursor: pointer; color: #7dc5ff;
+    background: rgba(10,24,46,.6); border: 1px solid #16355c; transition: all .2s; user-select: none; }
+  .chip:hover { color: #fff; transform: translateY(-1px); }
+  .chip.on { background: rgba(0,212,255,.16); border-color: #00b3e6; color: #fff; }
+
+  #roomGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+  .rcard { position: relative; transform-style: preserve-3d; }
+  .rcard.tilting { transition: transform .06s linear; }
+  .rcard .r-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .rcard .r-name { font-size: 16px; font-weight: 600; color: #fff; flex: 1; }
+  .rcard .r-loc { font-size: 11px; color: #5a7fb5; margin-bottom: 12px; }
+  .rcard .r-nums { display: flex; align-items: baseline; gap: 6px; margin-bottom: 10px; }
+  .rcard .r-occ { font-size: 26px; font-weight: 700; }
+  .rcard .r-total { font-size: 13px; color: #5a7fb5; }
+  .r-bar { height: 7px; border-radius: 5px; background: rgba(30,58,95,.7); overflow: hidden; position: relative; }
+  .r-bar i { display: block; height: 100%; width: 0; border-radius: 5px; transition: width .8s cubic-bezier(.2,.8,.2,1); }
+  .r-bar i::after {
+    content: ""; position: absolute; inset: 0;
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,.25), transparent);
+    transform: translateX(-100%); animation: barFlow 2.6s ease-in-out infinite;
+  }
+  @keyframes barFlow { 60%, 100% { transform: translateX(100%); } }
+  .r-foot { display: flex; justify-content: space-between; margin-top: 10px; font-size: 12px; color: #7dc5ff; }
+  .star { cursor: pointer; font-size: 17px; color: #4a6a96; transition: transform .25s, color .25s; user-select: none; }
+  .star:hover { transform: scale(1.3); }
+  .star.on { color: #ffc107; text-shadow: 0 0 10px rgba(255,193,7,.7); }
+  .empty { text-align: center; color: #5a7fb5; padding: 40px 0; font-size: 13px; grid-column: 1/-1; }
+
+  /* ============ 表格 ============ */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: #7dc5ff; font-weight: 600; padding: 10px 12px;
+       border-bottom: 1px solid #16355c; white-space: nowrap; }
+  td { padding: 11px 12px; border-bottom: 1px solid rgba(22,53,92,.45); }
+  tbody tr { transition: background .2s; }
+  tbody tr:hover { background: rgba(0,160,255,.07); }
+  .tbl-title { display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; }
+  .tbl-title h2 { font-size: 17px; color: #fff; }
+
+  /* ============ AI 助手 ============ */
+  .ai-wrap { display: grid; grid-template-columns: 1fr; gap: 14px; height: calc(100vh - 240px); min-height: 480px; }
+  #chatBox {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding: 6px 4px;
+  }
+  #chatBox::-webkit-scrollbar, .modal-body::-webkit-scrollbar { width: 6px; }
+  #chatBox::-webkit-scrollbar-thumb, .modal-body::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
+  .msg { max-width: 78%; padding: 11px 15px; border-radius: 13px; font-size: 14px; line-height: 1.65; white-space: pre-wrap; word-break: break-word; animation: msgIn .35s cubic-bezier(.2,.9,.3,1) both; }
+  @keyframes msgIn { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
+  .msg.me { align-self: flex-end; background: linear-gradient(135deg, #0d5c9e, #0a4c86); border: 1px solid #1e6aad; border-bottom-right-radius: 4px; }
+  .msg.ai { align-self: flex-start; background: rgba(16,35,63,.85); border: 1px solid #16355c; border-bottom-left-radius: 4px; }
+  .msg.ai .sql-toggle { display: inline-block; margin-top: 8px; font-size: 11px; color: #5a7fb5; cursor: pointer; user-select: none; }
+  .msg.ai .sql-toggle:hover { color: #00d4ff; }
+  .msg.ai pre { display: none; margin-top: 8px; padding: 9px 11px; background: #060d1c; border-radius: 7px;
+    font-size: 11px; color: #7dc5ff; overflow-x: auto; border: 1px solid #132a4a; }
+  .msg.ai pre.show { display: block; }
+  .typing { align-self: flex-start; display: flex; gap: 5px; padding: 13px 16px; background: rgba(16,35,63,.85);
+    border: 1px solid #16355c; border-radius: 13px; border-bottom-left-radius: 4px; }
+  .typing i { width: 7px; height: 7px; border-radius: 50%; background: #00d4ff; animation: bounce 1.2s infinite; }
+  .typing i:nth-child(2) { animation-delay: .18s; } .typing i:nth-child(3) { animation-delay: .36s; }
+  @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: .5; } 30% { transform: translateY(-7px); opacity: 1; } }
+  .quick { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0; }
+  .quick .q { font-size: 12px; padding: 6px 13px; border-radius: 999px; cursor: pointer; color: #7dc5ff;
+    background: rgba(10,28,52,.7); border: 1px solid #1e3a5f; transition: all .2s; }
+  .quick .q:hover { color: #fff; border-color: #00b3e6; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,160,255,.25); }
+  .chat-input { display: flex; gap: 10px; }
+  .chat-input input { flex: 1; }
+
+  /* ============ 历史规律 ============ */
+  .trend-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  .trend-toolbar select { width: 200px; }
+  .golden-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .gcard { position: relative; overflow: hidden; }
+  .gcard .g-rank { position: absolute; top: 10px; right: 12px; font-size: 26px; font-weight: 800; opacity: .16; }
+  .gcard .g-time { font-size: 17px; font-weight: 700; color: #fff; margin-bottom: 4px; }
+  .gcard .g-free { font-size: 26px; font-weight: 800; }
+  .gcard .g-sub { font-size: 11px; color: #5a7fb5; margin-top: 2px; }
+  .gcard.gold .g-free { color: #00e676; text-shadow: 0 0 16px rgba(0,230,118,.5); }
+  .gcard.peak .g-free { color: #ff5252; text-shadow: 0 0 16px rgba(255,82,82,.5); }
+  #heatChart, #weekChart { height: 300px; }
+  .notify-bar { display: none; align-items: center; gap: 10px; margin-bottom: 14px; padding: 11px 16px;
+    background: rgba(0,212,255,.08); border: 1px solid rgba(0,212,255,.3); border-radius: 10px; font-size: 13px; }
+  .notify-bar.on { display: flex; }
+
+  /* ============ 座位示意格子 ============ */
+  .sc {
+    border-radius: 4px; cursor: default;
+    background: rgba(64,196,255,.18); border: 1px solid rgba(64,196,255,.35);
+    transition: transform .18s cubic-bezier(.3,1.4,.4,1), box-shadow .18s, background .18s, border-color .18s;
+  }
+  .sc-on { background: rgba(0,230,118,.75); border-color: #00e676; box-shadow: 0 0 6px rgba(0,230,118,.45); }
+  .sc:hover {
+    transform: scale(1.45); z-index: 2;
+    background: rgba(0,212,255,.55); border-color: #00d4ff;
+    box-shadow: 0 0 12px rgba(0,212,255,.8);
+  }
+  .sc-on:hover {
+    background: #00e676; border-color: #7df9ff;
+    box-shadow: 0 0 14px rgba(0,230,118,.95);
+  }
+
+  /* ============ 弹窗 ============ */
+  #modalMask { position: fixed; inset: 0; z-index: 90; background: rgba(3,8,18,.72);
+    backdrop-filter: blur(6px); display: none; align-items: center; justify-content: center; padding: 24px; }
+  #modalMask.on { display: flex; animation: maskIn .25s both; }
+  @keyframes maskIn { from { opacity: 0; } }
+  .modal { width: 440px; max-width: 96vw; max-height: 88vh; overflow-y: auto;
+    animation: modalIn .35s cubic-bezier(.2,1.1,.3,1) both; }
+  @keyframes modalIn { from { opacity: 0; transform: scale(.86) translateY(20px); } }
+  .modal h3 { font-size: 17px; color: #fff; margin-bottom: 4px; }
+  .modal .m-foot { display: flex; justify-content: flex-end; gap: 10px; margin-top: 22px; }
+  .del-tip { font-size: 12px; color: #ff8a80; margin-top: 4px; }
+
+  /* toast（已弃用, 仅保留键名兼容） */
+  @media (max-width: 900px) {
+    .auth-left { display: none; }
+    #authView { gap: 0; }
+  }
+  @media (max-width: 760px) {
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+    .appbar { flex-wrap: wrap; }
+    .app-body { flex-direction: column; }
+    nav.tabs { width: 100%; position: static; flex-direction: row; flex-wrap: wrap; }
+  }
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<!-- ================= 登录 / 注册 ================= -->
+<div id="authView">
+  <!-- 左侧品牌信息区 -->
+  <div class="auth-left">
+    <img src="logo.svg" alt="StudySense Logo" width="76" height="76" style="margin-bottom:16px">
+    <div class="auth-hero-title">
+      <span style="background:linear-gradient(90deg,#00d4ff,#7df9ff,#00e676,#00d4ff);background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:neonFlow 6s linear infinite">StudySense</span><br>自习室智能监测平台
+    </div>
+    <div class="auth-hero-sub">视觉识别 × 实时数据 × AI 问答<br>多教室统一的座位占用感知与管理</div>
+    <div class="feat"><span class="f-icon">📊</span><div><div class="f-t">实时占用总览</div><div class="f-d">多教室占用率、空闲座位一屏尽览，5 秒自动刷新</div></div></div>
+    <div class="feat"><span class="f-icon">🤖</span><div><div class="f-t">AI 智能问答</div><div class="f-d">"现在哪间教室空座最多？" 自然语言直接问数据</div></div></div>
+    <div class="feat"><span class="f-icon">🛡️</span><div><div class="f-t">角色分级管理</div><div class="f-d">管理员管理教室与用户，普通用户专注查询</div></div></div>
+    <div class="feat"><span class="f-icon">⭐</span><div><div class="f-t">收藏与筛选</div><div class="f-d">收藏常用教室，按宽松 / 适中 / 紧张快速筛选</div></div></div>
+    <div class="auth-hero-stat">
+      <div class="hs-item"><div class="hs-v" id="hsRooms">--</div><div class="hs-l">在线教室</div></div>
+      <div class="hs-item"><div class="hs-v" id="hsSeats">--</div><div class="hs-l">监测座位</div></div>
+      <div class="hs-item"><div class="hs-v" id="hsFree">--</div><div class="hs-l">当前空座</div></div>
+    </div>
+  </div>
+  <!-- 右侧登录卡片 -->
+  <div class="panel auth-card" id="authCard">
+    <div class="auth-logo"><img src="logo.svg" alt="StudySense" width="56" height="56"></div>
+    <div class="auth-title">StudySense</div>
+    <div class="auth-sub">自习室智能监测 · 管理门户</div>
+    <div class="auth-tabs" id="authTabs">
+      <div class="slider"></div>
+      <div class="tab on" data-t="login">登 录</div>
+      <div class="tab" data-t="reg">注 册</div>
+    </div>
+    <div id="loginForm">
+      <label>用户名</label>
+      <input id="liUser" placeholder="请输入用户名" autocomplete="username">
+      <label>密码</label>
+      <input id="liPass" type="password" placeholder="请输入密码" autocomplete="current-password">
+      <div class="form-err" id="liErr"></div>
+      <button class="btn primary btn-auth" id="liBtn">登 录</button>
+    </div>
+    <div id="regForm" style="display:none">
+      <label>用户名（2-32位，字母/数字/下划线/中文）</label>
+      <input id="rgUser" placeholder="设置用户名">
+      <label>密码（至少 6 位）</label>
+      <input id="rgPass" type="password" placeholder="设置密码">
+      <label>确认密码</label>
+      <input id="rgPass2" type="password" placeholder="再次输入密码">
+      <div class="form-err" id="rgErr"></div>
+      <button class="btn primary btn-auth" id="rgBtn">注 册</button>
+    </div>
+    <div class="auth-hint">首次部署内置管理员: <b>admin / admin123</b><br>普通用户可直接注册, 管理员身份由后台分配</div>
+  </div>
+</div>
+
+<!-- ================= 应用 ================= -->
+<div id="appView" class="wrap" style="display:none">
+  <header class="appbar">
+    <div class="logo"><img src="logo.svg" alt="StudySense" style="height:26px;vertical-align:-7px;margin-right:8px">StudySense 管理门户</div>
+    <div class="spacer"></div>
+    <div class="userchip">
+      <span>👤 <b id="curName">--</b></span>
+      <span class="role-badge user" id="curRole">--</span>
+    </div>
+    <button class="btn ghost sm" id="btnLogout">退出登录</button>
+  </header>
+
+  <div class="app-body">
+  <nav class="tabs" id="navTabs"></nav>
+  <div class="main-col">
+
+  <!-- 占用总览 -->
+  <section class="view" id="v-overview">
+    <div class="kpis" id="kpis">
+      <div class="panel kpi k-cyan"><div class="k-label">教室总数</div><div class="k-value" id="kRooms">0</div><div class="k-sub">已注册教室</div></div>
+      <div class="panel kpi k-cyan"><div class="k-label">当前总人数</div><div class="k-value" id="kHeads">0</div><div class="k-sub">实时检测</div></div>
+      <div class="panel kpi k-green"><div class="k-label">占用座位</div><div class="k-value" id="kOcc">0</div><div class="k-sub">实时</div></div>
+      <div class="panel kpi k-amber"><div class="k-label">空闲座位</div><div class="k-value" id="kFree">0</div><div class="k-sub">实时</div></div>
+      <div class="panel kpi k-red"><div class="k-label">总占用率</div><div class="k-value" id="kRate">0%</div><div class="k-sub">占用 / 总座位</div></div>
+    </div>
+    <div class="toolbar">
+      <input type="text" id="searchBox" placeholder="🔍 搜索教室名称 / 地址">
+      <span class="chip on" data-f="all">全部</span>
+      <span class="chip" data-f="free">宽松</span>
+      <span class="chip" data-f="mid">适中</span>
+      <span class="chip" data-f="busy">紧张</span>
+      <span class="chip" data-f="fav">⭐ 我的收藏</span>
+    </div>
+    <div id="roomGrid"></div>
+  </section>
+
+  <!-- AI 助手 -->
+  <section class="view" id="v-ai">
+    <div class="panel ai-wrap" style="display:flex;flex-direction:column">
+      <div>
+        <h2 style="color:#fff;font-size:17px">🤖 AI 智能问答</h2>
+        <div style="font-size:12px;color:#5a7fb5;margin-top:4px">数据驱动 · 支持自然语言查询实时/历史占用、推荐教室</div>
+        <div class="quick">
+          <span class="q" data-q="现在哪间教室空座最多？">现在哪间教室空座最多？</span>
+          <span class="q" data-q="推荐一间人少安静的自习室">推荐一间人少安静的自习室</span>
+          <span class="q" data-q="过去一周哪天自习的人最多？">过去一周哪天人最多？</span>
+          <span class="q" data-q="过去一周哪几天、哪些时段人最少？">一周哪些时段最空？</span>
+          <span class="q" data-q="明天什么时间去自习最容易找到空座？">明天几点去最空？</span>
+        </div>
+      </div>
+      <div id="chatBox"></div>
+      <div class="chat-input">
+        <input id="chatInput" placeholder="输入问题，例如: 三教201现在有空座吗？" maxlength="200">
+        <button class="btn primary" id="btnSend">发送 ➤</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 历史规律 -->
+  <section class="view" id="v-trends">
+    <div class="notify-bar" id="notifyBar">
+      <span>🔔</span>
+      <span style="flex:1">开启空座提醒后, 你收藏的教室一旦空出座位将弹出浏览器通知</span>
+      <button class="btn primary sm" id="btnNotify">开启提醒</button>
+    </div>
+    <div class="panel" style="margin-bottom:16px">
+      <div class="trend-toolbar">
+        <h2 style="color:#fff;font-size:17px;flex:1">📅 历史规律 · 什么时候去自习</h2>
+        <select id="trendRoom">
+          <option value="">全馆</option>
+        </select>
+      </div>
+      <div class="golden-grid" id="goldenGrid"></div>
+      <div id="heatChart"></div>
+    </div>
+    <div class="panel">
+      <h2 style="color:#fff;font-size:17px;margin-bottom:12px">📈 近 7 天日均值趋势</h2>
+      <div id="weekChart"></div>
+    </div>
+  </section>
+
+  <!-- 教室管理 (admin) -->
+  <section class="view" id="v-rooms">
+    <div class="panel">
+      <div class="tbl-title">
+        <h2>🏫 教室管理</h2>
+        <button class="btn primary sm" id="btnAddRoom">＋ 新增教室</button>
+      </div>
+      <table>
+        <thead><tr><th>摄像头ID</th><th>教室名称</th><th>地址</th><th>座位数</th><th>当前占用</th><th>操作</th></tr></thead>
+        <tbody id="roomTbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <!-- 用户管理 (admin) -->
+  <section class="view" id="v-users">
+    <div class="panel">
+      <div class="tbl-title">
+        <h2>👥 用户管理</h2>
+        <button class="btn primary sm" id="btnAddUser">＋ 新增用户</button>
+      </div>
+      <table>
+        <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr></thead>
+        <tbody id="userTbody"></tbody>
+      </table>
+    </div>
+  </section>
+
+  </div>
+  </div>
+</div>
+
+<!-- 弹窗 -->
+<div id="modalMask">
+  <div class="panel modal" id="modalBody"></div>
+</div>
+
+<script>
+/* ================= 基础 ================= */
+const API = location.protocol + "//" + location.hostname + ":8000";
+let TOKEN = localStorage.getItem("st_token") || "";
+let ME = null;
+const $ = s => document.querySelector(s);
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({ "Content-Type": "application/json" }, opts.headers || {});
+  if (TOKEN) opts.headers["Authorization"] = "Bearer " + TOKEN;
+  const r = await fetch(API + path, opts);
+  if (r.status === 401) { logout(false); throw new Error("登录已过期"); }
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || r.statusText);
+  return data;
+}
+
+function logout(clear = true) {
+  if (clear) localStorage.removeItem("st_token");
+  TOKEN = ""; ME = null;
+  clearInterval(ovTimer);
+  $("#appView").style.display = "none";
+  $("#authView").style.display = "flex";
+  refreshAuthStats();
+  if (!authStatTimer) authStatTimer = setInterval(refreshAuthStats, 5000);
+}
+
+/* 数字滚动 */
+function tween(el, to, fmt = v => v) {
+  to = Number(to) || 0;   // 防止 undefined/NaN 传入
+  const from = parseFloat(el.dataset.val) || 0;
+  el.dataset.val = to;
+  if (from === to) { el.textContent = fmt(to); return; }
+  const t0 = performance.now(), dur = 700;
+  (function step(t) {
+    const p = Math.min(1, (t - t0) / dur), e = 1 - Math.pow(1 - p, 3);
+    el.textContent = fmt(Math.round(from + (to - from) * e));
+    if (p < 1) requestAnimationFrame(step);
+  })(t0);
+}
+
+/* 涟漪 + 聚光灯 + 3D 倾斜（全局事件委托） */
+addEventListener("click", e => {
+  const t = e.target.closest(".btn, .rcard, .kpi, .ntab, .chip");
+  if (!t) return;
+  const r = t.getBoundingClientRect();
+  const d = Math.max(r.width, r.height) * .9;
+  const s = document.createElement("span");
+  s.className = "ripple";
+  s.style.cssText = `width:${d}px;height:${d}px;left:${e.clientX - r.left - d / 2}px;top:${e.clientY - r.top - d / 2}px`;
+  t.appendChild(s);
+  s.addEventListener("animationend", () => s.remove());
+});
+addEventListener("mousemove", e => {
+  mouse.x = e.clientX; mouse.y = e.clientY;
+  document.querySelectorAll(".kpi, .panel").forEach(el => {
+    if (el.matches(":hover")) {
+      const r = el.getBoundingClientRect();
+      el.style.setProperty("--mx", (e.clientX - r.left) + "px");
+      el.style.setProperty("--my", (e.clientY - r.top) + "px");
+    }
+  });
+  const card = e.target.closest(".rcard");
+  if (tiltT && tiltT !== card && !card) { tiltT.classList.remove("tilting"); tiltT.style.transform = ""; tiltT = null; }
+  if (card) {
+    tiltT = card;
+    const r = card.getBoundingClientRect();
+    const px = (e.clientX - r.left) / r.width - .5, py = (e.clientY - r.top) / r.height - .5;
+    card.classList.add("tilting");
+    card.style.transform = `perspective(700px) rotateY(${px * 9}deg) rotateX(${-py * 7}deg) translateY(-3px)`;
+  }
+});
+let tiltT = null;
+
+/* ================= 粒子背景（鼠标响应增强版） ================= */
+const mouse = { x: -1e4, y: -1e4 };
+(function () {
+  const cv = $("#bg"), ctx = cv.getContext("2d");
+  let W, H, pts = [];
+  function resize() {
+    W = cv.width = innerWidth; H = cv.height = innerHeight;
+    pts = Array.from({ length: Math.min(120, Math.floor(W * H / 18000)) }, () => ({
+      x: Math.random() * W, y: Math.random() * H,
+      vx: (Math.random() - .5) * .35, vy: (Math.random() - .5) * .35,
+      r: Math.random() * 1.8 + .8,
+    }));
+  }
+  resize(); addEventListener("resize", resize);
+  (function loop() {
+    ctx.clearRect(0, 0, W, H);
+    for (const p of pts) {
+      p.x += p.vx; p.y += p.vy;
+      if (p.x < 0 || p.x > W) p.vx *= -1;
+      if (p.y < 0 || p.y > H) p.vy *= -1;
+      // 排斥半径 170, 力度 3.4（更明显的避让）
+      const dx = p.x - mouse.x, dy = p.y - mouse.y, d2 = dx * dx + dy * dy;
+      if (d2 < 28900) { const d = Math.sqrt(d2) || 1, f = (170 - d) / 170 * 3.4; p.x += dx / d * f; p.y += dy / d * f; }
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7);
+      ctx.fillStyle = "rgba(64,196,255,.55)"; ctx.fill();
+    }
+    for (let i = 0; i < pts.length; i++) {
+      for (let j = i + 1; j < pts.length; j++) {
+        const a = pts[i], b = pts[j];
+        const dx = a.x - b.x, dy = a.y - b.y, d2 = dx * dx + dy * dy;
+        if (d2 < 12000) {
+          ctx.strokeStyle = `rgba(0,180,255,${.1 * (1 - d2 / 12000)})`;
+          ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke();
+        }
+      }
+      // 光标连线半径 190, 更亮
+      const a = pts[i], dx = a.x - mouse.x, dy = a.y - mouse.y, d2 = dx * dx + dy * dy;
+      if (d2 < 36100) {
+        ctx.strokeStyle = `rgba(0,212,255,${.32 * (1 - d2 / 36100)})`;
+        ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(mouse.x, mouse.y); ctx.stroke();
+      }
+    }
+    requestAnimationFrame(loop);
+  })();
+})();
+
+/* ================= 登录 / 注册 ================= */
+document.querySelectorAll("#authTabs .tab").forEach(t => {
+  t.addEventListener("click", () => {
+    document.querySelectorAll("#authTabs .tab").forEach(x => x.classList.toggle("on", x === t));
+    const reg = t.dataset.t === "reg";
+    $("#authTabs").classList.toggle("reg", reg);
+    $("#loginForm").style.display = reg ? "none" : "";
+    $("#regForm").style.display = reg ? "" : "none";
+  });
+});
+
+async function doLogin() {
+  const u = $("#liUser").value.trim(), p = $("#liPass").value;
+  const err = $("#liErr"); err.textContent = "";
+  if (!u || !p) { err.textContent = "请输入用户名和密码"; return; }
+  const btn = $("#liBtn"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>登录中…';
+  try {
+    const r = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username: u, password: p }) });
+    TOKEN = r.token; localStorage.setItem("st_token", TOKEN);
+    enterApp(r.user);
+  } catch (ex) { err.textContent = ex.message; }
+  btn.disabled = false; btn.textContent = "登 录";
+}
+
+async function doRegister() {
+  const u = $("#rgUser").value.trim(), p = $("#rgPass").value, p2 = $("#rgPass2").value;
+  const err = $("#rgErr"); err.textContent = "";
+  if (!u || !p) { err.textContent = "请填写用户名和密码"; return; }
+  if (p !== p2) { err.textContent = "两次输入的密码不一致"; return; }
+  if (p.length < 6) { err.textContent = "密码至少 6 位"; return; }
+  const btn = $("#rgBtn"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>注册中…';
+  try {
+    await api("/api/auth/register", { method: "POST", body: JSON.stringify({ username: u, password: p }) });
+    $("#liUser").value = u; $("#liPass").value = p;
+    document.querySelector('#authTabs .tab[data-t="login"]').click();
+    doLogin();
+  } catch (ex) { err.textContent = ex.message; }
+  btn.disabled = false; btn.textContent = "注 册";
+}
+
+$("#liBtn").addEventListener("click", doLogin);
+$("#rgBtn").addEventListener("click", doRegister);
+$("#liPass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+$("#rgPass2").addEventListener("keydown", e => { if (e.key === "Enter") doRegister(); });
+
+/* ================= 应用框架 ================= */
+function enterApp(me) {
+  ME = me;
+  $("#curName").textContent = me.username;
+  const rb = $("#curRole");
+  rb.textContent = me.role === "admin" ? "管理员" : "普通用户";
+  rb.className = "role-badge " + me.role;
+  $("#authView").style.display = "none";
+  $("#appView").style.display = "";
+  clearInterval(authStatTimer);
+
+  // 角色化导航
+  const tabs = [["overview", "📊 占用总览"], ["trends", "📅 历史规律"], ["ai", "🤖 AI 助手"]];
+  if (me.role === "admin") tabs.push(["rooms", "🏫 教室管理"], ["users", "👥 用户管理"]);
+  $("#navTabs").innerHTML = tabs.map(([k, t]) =>
+    `<div class="ntab${k === "overview" ? " on" : ""}" data-v="${k}">${t}</div>`).join("");
+  document.querySelectorAll(".ntab").forEach(n => n.addEventListener("click", () => {
+    document.querySelectorAll(".ntab").forEach(x => x.classList.toggle("on", x === n));
+    document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + n.dataset.v));
+    if (n.dataset.v === "rooms") loadRoomAdmin();
+    if (n.dataset.v === "users") loadUserAdmin();
+    if (n.dataset.v === "trends") loadTrends();
+  }));
+  $("#v-overview").classList.add("on");
+  refreshOverview();
+  clearInterval(ovTimer);
+  ovTimer = setInterval(refreshOverview, 5000);
+  startSeatWatcher();
+  if (ME.role === "admin") loadRoomAdmin(), loadUserAdmin();
+}
+let ovTimer = null;
+$("#btnLogout").addEventListener("click", () => logout(true));
+
+/* ================= 占用总览 ================= */
+let roomFilter = "all", roomSearch = "", favs = new Set(JSON.parse(localStorage.getItem("st_favs") || "[]"));
+$("#searchBox").addEventListener("input", e => { roomSearch = e.target.value.trim(); renderRooms(); });
+document.querySelectorAll(".chip[data-f]").forEach(c => c.addEventListener("click", () => {
+  document.querySelectorAll(".chip[data-f]").forEach(x => x.classList.toggle("on", x === c));
+  roomFilter = c.dataset.f; renderRooms();
+}));
+
+async function refreshOverview() {
+  let data;
+  try { data = await api("/api/overview"); } catch { return; }
+  const s = data.summary || {};   // 聚合字段嵌套在 summary 里
+  tween($("#kRooms"), s.room_count);
+  tween($("#kHeads"), s.total_heads);
+  tween($("#kOcc"), s.total_occupied);
+  tween($("#kFree"), s.total_seats - s.total_occupied);
+  tween($("#kRate"), +(s.occupancy_rate * 100).toFixed(1), v => v + "%");
+  renderRooms(data.rooms);
+  if (ME && ME.role === "admin" && $("#v-rooms").classList.contains("on")) renderRoomTable(data.rooms);
+}
+
+function occColor(rate) {
+  return rate >= .7 ? "#ff5252" : rate >= .3 ? "#ffc107" : "#00e676";
+}
+
+function renderRooms(rooms) {
+  rooms = rooms || renderRooms._cache || [];
+  renderRooms._cache = rooms;
+  const grid = $("#roomGrid");
+  let list = rooms;
+  if (roomSearch) list = list.filter(r => r.name.includes(roomSearch) || (r.location || "").includes(roomSearch));
+  if (roomFilter === "free") list = list.filter(r => r.occupancy_rate < .3);
+  if (roomFilter === "mid") list = list.filter(r => r.occupancy_rate >= .3 && r.occupancy_rate < .7);
+  if (roomFilter === "busy") list = list.filter(r => r.occupancy_rate >= .7);
+  if (roomFilter === "fav") list = list.filter(r => favs.has(r.camera_id));
+  if (!list.length) { grid.innerHTML = `<div class="empty">暂无匹配的教室</div>`; return; }
+  grid.innerHTML = list.map(r => {
+    const c = occColor(r.occupancy_rate);
+    const p = (r.occupancy_rate * 100).toFixed(0);
+    const fav = favs.has(r.camera_id);
+    return `<div class="panel rcard" data-cam="${r.camera_id}">
+      <div class="r-head">
+        <span class="r-name">${r.name}</span>
+        <span class="star${fav ? " on" : ""}" data-fav="${r.camera_id}" title="收藏">${fav ? "★" : "☆"}</span>
+      </div>
+      <div class="r-loc">📍 ${r.location || "未设置地址"} · ${r.camera_id}</div>
+      <div class="r-nums"><span class="r-occ" style="color:${c};text-shadow:0 0 14px ${c}66">${r.occupied_count}</span>
+        <span class="r-total">/ ${r.total_seats} 座</span></div>
+      <div class="r-bar"><i style="width:${p}%;background:linear-gradient(90deg,${c}55,${c})"></i></div>
+      <div class="r-foot"><span>占用率 <b style="color:${c}">${p}%</b></span>
+        <span>检测 ${r.head_count} 人</span></div>
+    </div>`;
+  }).join("");
+}
+
+// 收藏 / 详情（事件委托）
+$("#roomGrid").addEventListener("click", e => {
+  const star = e.target.closest(".star");
+  if (star) {
+    const cam = star.dataset.fav;
+    favs.has(cam) ? favs.delete(cam) : favs.add(cam);
+    localStorage.setItem("st_favs", JSON.stringify([...favs]));
+    renderRooms();
+    return;
+  }
+  const card = e.target.closest(".rcard");
+  if (card) showRoomDetail(card.dataset.cam);
+});
+
+/* ---------- 教室详情弹窗（座位点阵 + 24h 趋势） ---------- */
+async function showRoomDetail(cam) {
+  let st = null, room = null;
+  try {
+    const ov = await api("/api/overview");
+    room = ov.rooms.find(r => r.camera_id === cam);
+    const r = await fetch(`${API}/api/stats?camera_id=${cam}`);
+    if (r.ok) st = await r.json();
+  } catch { /* overview 至少能拿到 */ }
+  if (!room) { openModal(`<h3>提示</h3><p style="margin-top:12px;font-size:14px">教室不存在或已被删除</p>
+    <div class="m-foot"><button class="btn sm" onclick="closeModal()">关闭</button></div>`); return; }
+  const occ = st ? st.occupied_count : 0, total = room.total_seats;
+  openModal(`<h3>${room.name} · 实时详情</h3>
+    <div style="font-size:12px;color:#5a7fb5">📍 ${room.location || "未设置地址"} · ${cam}</div>
+    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+      <div class="panel kpi k-cyan" style="flex:1;min-width:120px"><div class="k-label">占用</div><div class="k-value">${occ}</div></div>
+      <div class="panel kpi k-green" style="flex:1;min-width:120px"><div class="k-label">空余</div><div class="k-value">${total - occ}</div></div>
+      <div class="panel kpi k-amber" style="flex:1;min-width:120px"><div class="k-label">占用率</div><div class="k-value">${total ? (occ / total * 100).toFixed(0) : 0}%</div></div>
+    </div>
+    <label style="margin-top:18px">座位占用示意（按占用数从左至右填充 · 绿=占用 蓝=空闲）</label>
+    <div style="position:relative">
+      <div id="mSeatGrid" style="display:grid;gap:5px;grid-template-columns:repeat(auto-fill,minmax(15px,1fr))"></div>
+      <div id="seatTip" style="position:absolute;pointer-events:none;opacity:0;transition:opacity .15s;
+        background:rgba(12,27,49,.95);border:1px solid #1e4d80;border-radius:6px;
+        padding:4px 10px;font-size:12px;color:#d6ecff;white-space:nowrap;z-index:5"></div>
+    </div>
+    <label style="margin-top:18px">24 小时占用趋势</label>
+    <div id="mTrend" style="height:220px"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="askAIAbout('${room.name}','${cam}')">🤖 问 AI 这间教室</button>
+      <button class="btn sm" onclick="closeModal()">关闭</button>
+    </div>`);
+  // 座位示意（未实现座位映射, 按占用数从左至右填充; 悬停放大+辉光+序号提示）
+  const sg = $("#mSeatGrid");
+  if (total) {
+    sg.innerHTML = Array.from({ length: total }, (_, i) => {
+      const on = i < occ;
+      return `<span class="sc${on ? " sc-on" : ""}" data-i="${i + 1}" data-on="${on ? 1 : 0}" style="aspect-ratio:1"></span>`;
+    }).join("");
+    // 悬停浮动提示（跟随鼠标）
+    sg.addEventListener("mousemove", e => {
+      const t = e.target.closest(".sc");
+      const tip = $("#seatTip");
+      if (!t) { tip.style.opacity = 0; return; }
+      tip.textContent = `座位 ${t.dataset.i} · ${t.dataset.on === "1" ? "占用" : "空闲"}`;
+      tip.style.opacity = 1;
+      const r = $("#modalBody").getBoundingClientRect();
+      tip.style.left = (e.clientX - r.left + 14) + "px";
+      tip.style.top = (e.clientY - r.top - 30) + "px";
+    });
+    sg.addEventListener("mouseleave", () => { $("#seatTip").style.opacity = 0; });
+  }
+  // 趋势图（接口返回 {points: [{ts, head_count, occupied_count}]}）
+  api(`/api/history?hours=24&camera_id=${cam}`).then(d => {
+    const pts = d.points || [];
+    if (!pts.length) { $("#mTrend").innerHTML = `<div class="empty">暂无历史数据</div>`; return; }
+    // 数据点过多时降采样至 ~200 个, 避免密集卡顿
+    const step = Math.max(1, Math.ceil(pts.length / 200));
+    const sampled = pts.filter((_, i) => i % step === 0 || i === pts.length - 1);
+    const times = sampled.map(p => p.ts);
+    const occupied = sampled.map(p => p.occupied_count);
+    const heads = sampled.map(p => p.head_count);
+    const ch = echarts.init($("#mTrend"));
+    ch.setOption({
+      backgroundColor: "transparent",
+      tooltip: { trigger: "axis", backgroundColor: "#10233f", borderColor: "#1e3a5f", textStyle: { color: "#d6e4ff" } },
+      grid: { left: 36, right: 14, top: 30, bottom: 24 },
+      xAxis: { type: "category", data: times, axisLabel: { color: "#5a7fb5" }, axisLine: { lineStyle: { color: "#1e3a5f" } } },
+      yAxis: { type: "value", minInterval: 1, axisLabel: { color: "#5a7fb5" }, splitLine: { lineStyle: { color: "#132a4a" } } },
+      series: [
+        { name: "占用座位", type: "line", smooth: true, data: occupied, showSymbol: false,
+          lineStyle: { color: "#00e676", width: 2.5, shadowBlur: 8, shadowColor: "#00e676" },
+          areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: "rgba(0,230,118,.3)" }, { offset: 1, color: "rgba(0,0,0,0)" }] } },
+          markLine: { silent: true, symbol: ["none", "none"], data: [{ type: "average" }],
+            lineStyle: { color: "rgba(0,230,118,.4)", type: "dashed" }, label: { formatter: "均值 {c}", color: "#5a7fb5" } } },
+        { name: "检测人数", type: "line", smooth: true, data: heads, showSymbol: false,
+          lineStyle: { color: "#00d4ff", width: 2.5, shadowBlur: 8, shadowColor: "#00d4ff" },
+          areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: "rgba(0,212,255,.25)" }, { offset: 1, color: "rgba(0,0,0,0)" }] } } },
+      ],
+    });
+  }).catch(() => { $("#mTrend").innerHTML = `<div class="empty">暂无历史数据</div>`; });
+}
+
+/* ================= 历史规律（什么时候去自习） ================= */
+const DOW_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+let heatChart = null, weekChart = null, trendLoaded = false;
+
+async function loadTrends() {
+  const cam = $("#trendRoom").value;
+  // 教室下拉选项（首次填充）
+  if (!$("#trendRoom").options.length || $("#trendRoom").options.length < 2) {
+    try {
+      const ov = await api("/api/overview");
+      $("#trendRoom").innerHTML = `<option value="">全馆</option>` +
+        ov.rooms.map(r => `<option value="${r.camera_id}">${r.name}</option>`).join("");
+      if (cam) $("#trendRoom").value = cam;
+    } catch { /* 下拉加载失败不阻塞 */ }
+  }
+  let d;
+  try { d = await api(`/api/trends?days=7${cam ? "&camera_id=" + cam : ""}`); }
+  catch (ex) { $("#heatChart").innerHTML = `<div class="empty">加载失败: ${ex.message}</div>`; return; }
+
+  /* ---- 黄金时段 / 高峰时段卡片 ---- */
+  const gEl = $("#goldenGrid");
+  const cards = [];
+  d.golden.forEach((g, i) => cards.push(
+    `<div class="panel kpi gcard gold"><span class="g-rank">${["🥇", "🥈", "🥉"][i] || i + 1}</span>
+      <div class="k-label">黄金时段 · 推荐</div>
+      <div class="g-time">${DOW_CN[g.dow]} ${String(g.hour).padStart(2, "0")}:00–${String(g.hour + 1).padStart(2, "0")}:00</div>
+      <div class="g-free">${(g.free_rate * 100).toFixed(0)}%</div>
+      <div class="g-sub">平均空座率 · ${g.samples} 天样本</div></div>`));
+  d.peak.forEach(g => cards.push(
+    `<div class="panel kpi gcard peak"><span class="g-rank">⚠️</span>
+      <div class="k-label">高峰时段 · 避开</div>
+      <div class="g-time">${DOW_CN[g.dow]} ${String(g.hour).padStart(2, "0")}:00–${String(g.hour + 1).padStart(2, "0")}:00</div>
+      <div class="g-free">${(g.free_rate * 100).toFixed(0)}%</div>
+      <div class="g-sub">平均空座率 · ${g.samples} 天样本</div></div>`));
+  gEl.innerHTML = cards.length ? cards.join("") :
+    `<div class="empty" style="grid-column:1/-1">数据积累中, 至少需要一天的记录后才能给出时段推荐</div>`;
+
+  /* ---- 热力图: 行=日期(近→远), 列=小时 ---- */
+  const dates = d.dates, hm = d.heatmap;
+  const dateLabel = dt => {
+    const o = new Date(dt + "T00:00:00");
+    return `${(o.getMonth() + 1)}/${o.getDate()} ${DOW_CN[o.getDay() === 0 ? 6 : o.getDay() - 1]}`;
+  };
+  const data = [];
+  dates.forEach((dt, yi) => {
+    (hm[dt] || []).forEach((v, xi) => {
+      if (v !== null && v !== undefined) data.push([xi, yi, +(v * 100).toFixed(1)]);
+    });
+  });
+  heatChart = heatChart || echarts.init($("#heatChart"));
+  heatChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: {
+      position: "top",
+      backgroundColor: "#10233f", borderColor: "#1e3a5f", textStyle: { color: "#d6e4ff" },
+      formatter: p => `${dateLabel(dates[p.value[1]])} ${String(p.value[0]).padStart(2, "0")}:00<br/>平均占用率 <b>${p.value[2]}%</b>`,
+    },
+    grid: { left: 76, right: 16, top: 10, bottom: 46 },
+    xAxis: { type: "category", data: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")),
+      axisLabel: { color: "#5a7fb5" }, axisLine: { lineStyle: { color: "#1e3a5f" } }, splitLine: { show: false } },
+    yAxis: { type: "category", data: dates.map(dateLabel), inverse: true,
+      axisLabel: { color: "#7dc5ff" }, axisLine: { lineStyle: { color: "#1e3a5f" } } },
+    visualMap: {
+      min: 0, max: 100, calculable: false, orient: "horizontal", left: "center", bottom: 0,
+      textStyle: { color: "#5a7fb5" },
+      inRange: { color: ["#0a2440", "#0e5f9e", "#ffc107", "#ff5252"] },
+    },
+    series: [{
+      type: "heatmap", data, itemStyle: { borderColor: "#0a182e", borderWidth: 1, borderRadius: 3 },
+      emphasis: { itemStyle: { shadowBlur: 10, shadowColor: "rgba(0,212,255,.6)" } },
+    }],
+  });
+  if (!data.length) heatChart.setOption({ title: { text: "暂无历史数据", left: "center", top: "middle", textStyle: { color: "#5a7fb5", fontSize: 13 } } });
+
+  /* ---- 近 7 天日均值柱状图 ---- */
+  const dayAvg = dates.map(dt => {
+    const arr = (hm[dt] || []).filter(v => v !== null && v !== undefined);
+    return arr.length ? +(arr.reduce((a, b) => a + b, 0) / arr.length * 100).toFixed(1) : null;
+  }).reverse();          // 趋势图从早到晚
+  const dateLabels = dates.map(dateLabel).reverse();
+  weekChart = weekChart || echarts.init($("#weekChart"));
+  weekChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: { backgroundColor: "#10233f", borderColor: "#1e3a5f", textStyle: { color: "#d6e4ff" },
+      formatter: p => `${p.name}<br/>日均占用率 <b>${p.value ?? "--"}%</b>` },
+    grid: { left: 44, right: 16, top: 30, bottom: 30 },
+    xAxis: { type: "category", data: dateLabels, axisLabel: { color: "#5a7fb5" },
+      axisLine: { lineStyle: { color: "#1e3a5f" } } },
+    yAxis: { type: "value", max: 100, axisLabel: { color: "#5a7fb5", formatter: "{value}%" },
+      splitLine: { lineStyle: { color: "#132a4a" } } },
+    series: [{
+      type: "bar", data: dayAvg, barWidth: "46%",
+      itemStyle: { borderRadius: [5, 5, 0, 0], color: new echarts.graphic.LinearGradient(0, 0, 0, 1,
+        [{ offset: 0, color: "#00d4ff" }, { offset: 1, color: "#0a4c86" }]) },
+      emphasis: { itemStyle: { shadowBlur: 14, shadowColor: "rgba(0,212,255,.7)" } },
+      markLine: { silent: true, symbol: ["none", "none"], data: [{ type: "average" }],
+        lineStyle: { color: "rgba(0,230,118,.5)", type: "dashed" },
+        label: { formatter: "均值 {c}%", color: "#5a7fb5" } },
+    }],
+  });
+  trendLoaded = true;
+}
+$("#trendRoom").addEventListener("change", loadTrends);
+
+/* ================= 空座提醒（浏览器通知, 收藏教室空闲变化） ================= */
+let seatWatch = { on: false, prev: {}, cooldown: {} };
+
+function notifyPush(title, body) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  new Notification(title, { body, icon: "logo.svg", tag: "seat-" + Date.now(), silent: false });
+}
+
+async function startSeatWatcher() {
+  seatWatch.on = true;
+  $("#notifyBar").classList.toggle("on",
+    "Notification" in window && Notification.permission !== "granted");
+  setInterval(async () => {
+    if (!seatWatch.on || !favs.size) return;
+    try {
+      const d = await api("/api/overview");
+      for (const r of d.rooms) {
+        if (!favs.has(r.camera_id)) continue;
+        const free = r.total_seats - r.occupied_count;
+        const prev = seatWatch.prev[r.camera_id];
+        // 状态翻转: 空闲不足 → 空座充足(≥3), 且 5 分钟冷却内不重复提醒
+        if (prev !== undefined && prev < 3 && free >= 3 &&
+            Date.now() - (seatWatch.cooldown[r.camera_id] || 0) > 5 * 60 * 1000) {
+          seatWatch.cooldown[r.camera_id] = Date.now();
+          notifyPush("🪑 空座提醒", `${r.name} 空出 ${free} 个座位（共 ${r.total_seats} 座, 占用率 ${(r.occupancy_rate * 100).toFixed(0)}%）`);
+        }
+        seatWatch.prev[r.camera_id] = free;
+      }
+    } catch { /* 网络异常忽略, 下轮重试 */ }
+  }, 15000);   // 15 秒检查一次
+}
+
+$("#btnNotify").addEventListener("click", async () => {
+  if (!("Notification" in window)) { $("#notifyBar").classList.remove("on"); return; }
+  const p = await Notification.requestPermission();
+  if (p === "granted") {
+    $("#notifyBar").classList.remove("on");
+    notifyPush("✅ 空座提醒已开启", `正在监视 ${favs.size} 间收藏教室, 空座出现即通知`);
+  }
+});
+
+/* ================= AI 助手 ================= */
+function addMsg(cls, html) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.innerHTML = html;
+  $("#chatBox").appendChild(d);
+  $("#chatBox").scrollTop = 1e9;
+  return d;
+}
+
+async function sendQuestion(q, cam = null) {
+  if (!q.trim()) return;
+  addMsg("me", q);
+  const tip = document.createElement("div");
+  tip.className = "typing"; tip.innerHTML = "<i></i><i></i><i></i>";
+  $("#chatBox").appendChild(tip); $("#chatBox").scrollTop = 1e9;
+  $("#chatInput").value = "";
+  try {
+    const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ question: q, camera_id: cam }) });
+    tip.remove();
+    const m = addMsg("ai", `${r.answer.replace(/</g, "&lt;")}<br>
+      <span class="sql-toggle" onclick="this.nextElementSibling.classList.toggle('show')">▸ 查看 SQL</span>
+      <pre>${(r.sql || "").replace(/</g, "&lt;")}</pre>`);
+  } catch (ex) {
+    tip.remove();
+    addMsg("ai", "⚠️ " + ex.message);
+  }
+}
+
+$("#btnSend").addEventListener("click", () => sendQuestion($("#chatInput").value));
+$("#chatInput").addEventListener("keydown", e => { if (e.key === "Enter") sendQuestion($("#chatInput").value); });
+document.querySelectorAll(".quick .q").forEach(q =>
+  q.addEventListener("click", () => sendQuestion(q.dataset.q)));
+
+function askAIAbout(name, cam) {
+  closeModal();
+  document.querySelector('.ntab[data-v="ai"]').click();
+  sendQuestion(`${name}现在的空座情况怎么样？人多吗？`, cam);
+}
+
+/* ================= 管理端: 教室管理 ================= */
+async function loadRoomAdmin() {
+  try {
+    const rooms = await api("/api/overview");
+    renderRoomTable(rooms.rooms);
+  } catch (ex) {
+    $("#roomTbody").innerHTML = `<tr><td colspan="6" class="empty" style="color:#ff8a80">加载失败: ${ex.message}</td></tr>`;
+  }
+}
+
+function renderRoomTable(rooms) {
+  $("#roomTbody").innerHTML = rooms.map(r => `<tr>
+    <td style="color:#5a7fb5">${r.camera_id}</td>
+    <td><b style="color:#fff">${r.name}</b></td>
+    <td>${r.location || "--"}</td>
+    <td>${r.total_seats}</td>
+    <td><span style="color:${occColor(r.occupancy_rate)}">${r.occupied_count} (${(r.occupancy_rate * 100).toFixed(0)}%)</span></td>
+    <td style="white-space:nowrap">
+      <button class="btn ghost sm" onclick='editRoom(${JSON.stringify(r).replace(/'/g, "&#39;")})'>编辑</button>
+      <button class="btn danger sm" onclick="delRoom('${r.camera_id}','${r.name}')">删除</button>
+    </td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无教室</td></tr>`;
+}
+
+$("#btnAddRoom").addEventListener("click", () => roomForm(null));
+
+function roomForm(r) {
+  const isEdit = !!r;
+  openModal(`<h3>${isEdit ? "编辑教室" : "新增教室"}</h3>
+    <label>摄像头 ID${isEdit ? "（不可修改）" : ""}</label>
+    <input id="fCam" value="${r ? r.camera_id : ""}" ${isEdit ? "disabled" : ""} placeholder="如 room_301">
+    <label>教室名称 *</label>
+    <input id="fName" value="${r ? r.name : ""}" placeholder="如 三教301">
+    <label>地址</label>
+    <input id="fLoc" value="${r ? (r.location || "") : ""}" placeholder="如 三教3楼东侧">
+    <label>座位总数 *</label>
+    <input id="fSeats" type="number" min="0" value="${r ? r.total_seats : 60}">
+    <div class="form-err" id="fErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn primary sm" id="fSave">${isEdit ? "保存修改" : "创建教室"}</button>
+    </div>`);
+  $("#fSave").addEventListener("click", async () => {
+    const body = {
+      camera_id: $("#fCam").value.trim(),
+      name: $("#fName").value.trim(),
+      location: $("#fLoc").value.trim(),
+      total_seats: +$("#fSeats").value || 0,
+    };
+    if (!body.camera_id || !body.name) { $("#fErr").textContent = "请填写摄像头 ID 和教室名称"; return; }
+    try {
+      if (isEdit) await api(`/api/rooms/${r.camera_id}`, { method: "PUT", body: JSON.stringify(body) });
+      else await api("/api/rooms", { method: "POST", body: JSON.stringify(body) });
+      closeModal(); loadRoomAdmin(); refreshOverview();
+    } catch (ex) { $("#fErr").textContent = ex.message; }
+  });
+}
+
+function editRoom(r) { roomForm(r); }
+
+function delRoom(cam, name) {
+  openModal(`<h3>删除教室</h3>
+    <p style="margin-top:12px;font-size:14px">确定删除 <b style="color:#fff">${name}</b>（${cam}）？</p>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:14px;cursor:pointer">
+      <input type="checkbox" id="purge" style="width:auto"> 同时删除该教室全部历史数据（含记录/会话/告警）
+    </label>
+    <p class="del-tip">不勾选则仅移除教室信息, 历史数据保留（重新注册同 ID 教室后数据仍然可见）。</p>
+    <div class="form-err" id="delErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn danger sm" id="delOk">确认删除</button>
+    </div>`);
+  $("#delOk").addEventListener("click", async () => {
+    try {
+      await api(`/api/rooms/${cam}?purge=${$("#purge").checked}`, { method: "DELETE" });
+      closeModal(); loadRoomAdmin(); refreshOverview();
+    } catch (ex) { $("#delErr").textContent = ex.message; }
+  });
+}
+
+/* ================= 管理端: 用户管理 ================= */
+async function loadUserAdmin() {
+  try {
+    const users = await api("/api/admin/users");
+    $("#userTbody").innerHTML = users.map(u => `<tr>
+      <td style="color:#5a7fb5">${u.id}</td>
+      <td><b style="color:#fff">${u.username}</b>${u.id === ME.id ? ' <span style="color:#5a7fb5;font-size:11px">(我)</span>' : ""}</td>
+      <td><span class="role-badge ${u.role}">${u.role === "admin" ? "管理员" : "普通用户"}</span></td>
+      <td>${(u.created_at || "").slice(0, 19)}</td>
+      <td>${(u.last_login || "--").slice(0, 19)}</td>
+      <td style="white-space:nowrap">
+        ${u.id !== ME.id ? `
+        <button class="btn ghost sm" onclick="toggleRole(${u.id},'${u.role}','${u.username}')">${u.role === "admin" ? "降为用户" : "升为管理员"}</button>
+        <button class="btn ghost sm" onclick="resetPwd(${u.id},'${u.username}')">重置密码</button>
+        <button class="btn danger sm" onclick="delUser(${u.id},'${u.username}')">删除</button>` : '<span style="color:#4a6a96">当前账号</span>'}
+      </td></tr>`).join("");
+  } catch (ex) {
+    $("#userTbody").innerHTML = `<tr><td colspan="6" class="empty" style="color:#ff8a80">加载失败: ${ex.message}</td></tr>`;
+  }
+}
+
+$("#btnAddUser").addEventListener("click", () => {
+  openModal(`<h3>新增用户</h3>
+    <label>用户名 *</label><input id="uName" placeholder="2-32位">
+    <label>初始密码 *</label><input id="uPass" placeholder="至少 6 位">
+    <label>角色</label>
+    <select id="uRole"><option value="user">普通用户</option><option value="admin">管理员</option></select>
+    <div class="form-err" id="uErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn primary sm" id="uSave">创建用户</button>
+    </div>`);
+  $("#uSave").addEventListener("click", async () => {
+    const body = { username: $("#uName").value.trim(), password: $("#uPass").value, role: $("#uRole").value };
+    if (!body.username || !body.password) { $("#uErr").textContent = "请填写完整"; return; }
+    try {
+      await api("/api/admin/users", { method: "POST", body: JSON.stringify(body) });
+      closeModal(); loadUserAdmin();
+    } catch (ex) { $("#uErr").textContent = ex.message; }
+  });
+});
+
+async function toggleRole(uid, role, name) {
+  try {
+    await api(`/api/admin/users/${uid}`, { method: "PUT", body: JSON.stringify({ role: role === "admin" ? "user" : "admin" }) });
+    loadUserAdmin();
+  } catch (ex) {
+    $("#userTbody").innerHTML = `<tr><td colspan="6" class="empty" style="color:#ff8a80">${ex.message}</td></tr>`;
+  }
+}
+
+function resetPwd(uid, name) {
+  openModal(`<h3>重置密码</h3>
+    <p style="font-size:13px;color:#7dc5ff;margin-top:8px">为用户 <b style="color:#fff">${name}</b> 设置新密码：</p>
+    <label>新密码</label><input id="npwd" placeholder="至少 6 位">
+    <div class="form-err" id="npErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn primary sm" id="npSave">确认重置</button>
+    </div>`);
+  $("#npSave").addEventListener("click", async () => {
+    const p = $("#npwd").value;
+    if (p.length < 6) { $("#npErr").textContent = "密码至少 6 位"; return; }
+    try {
+      await api(`/api/admin/users/${uid}`, { method: "PUT", body: JSON.stringify({ password: p }) });
+      closeModal();
+    } catch (ex) { $("#npErr").textContent = ex.message; }
+  });
+}
+
+function delUser(uid, name) {
+  openModal(`<h3>删除用户</h3>
+    <p style="margin-top:12px;font-size:14px">确定删除用户 <b style="color:#fff">${name}</b>？该操作不可恢复。</p>
+    <div class="form-err" id="duErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn danger sm" id="duOk">确认删除</button>
+    </div>`);
+  $("#duOk").addEventListener("click", async () => {
+    try {
+      await api(`/api/admin/users/${uid}`, { method: "DELETE" });
+      closeModal(); loadUserAdmin();
+    } catch (ex) { $("#duErr").textContent = ex.message; }
+  });
+}
+
+/* ================= 弹窗控制 ================= */
+function openModal(html) {
+  $("#modalBody").innerHTML = html;
+  $("#modalMask").classList.add("on");
+}
+function closeModal() { $("#modalMask").classList.remove("on"); }
+$("#modalMask").addEventListener("click", e => { if (e.target === e.currentTarget) closeModal(); });
+addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); });
+
+/* ================= 启动: 尝试恢复会话 ================= */
+let authStatTimer = null;
+async function refreshAuthStats() {
+  if ($("#authView").style.display === "none") return;
+  try {
+    const d = await api("/api/overview");
+    const s = d.summary || {};   // 聚合字段嵌套在 summary 里
+    $("#hsRooms").textContent = s.room_count ?? "--";
+    $("#hsSeats").textContent = s.total_seats ?? "--";
+    $("#hsFree").textContent = (s.total_seats ?? 0) - (s.total_occupied ?? 0);
+  } catch { /* 后端未就绪时忽略 */ }
+}
+
+(async function boot() {
+  if (TOKEN) {
+    try {
+      ME = await api("/api/auth/me");
+      enterApp(ME);
+      return;
+    } catch { /* token 失效, 回登录页 */ }
+  }
+  $("#authView").style.display = "flex";
+  refreshAuthStats();
+  authStatTimer = setInterval(refreshAuthStats, 5000);
+})();
+</script>
+</body>
+</html>

@@ -14,6 +14,7 @@ services:
       MYSQL_DATABASE: study_room
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      TOKEN_SECRET: ${TOKEN_SECRET:-studysense-default-secret-change-me}
     depends_on:
       db:
         condition: service_healthy
@@ -39,7 +40,7 @@ services:
       retries: 20
     restart: unless-stopped
 
-  # ---------- Streamlit 管理页 ----------
+  # ---------- 管理门户（登录/注册 + 用户端 + 管理端 SPA） ----------
   dashboard:
     build:
       context: .
@@ -49,13 +50,6 @@ services:
       - "8501:8501"
     environment:
       TZ: Asia/Shanghai
-      API_BASE: http://api:8000    # 容器网络内通过服务名访问后端
-      MYSQL_HOST: db
-      MYSQL_PORT: "3306"
-      MYSQL_USER: root
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?请在 .env 里设置 MYSQL_PASSWORD}
-      OLLAMA_URL: http://ollama:11434
-      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
     depends_on:
       - api
     restart: unless-stopped

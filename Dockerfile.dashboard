@@ -2,13 +2,13 @@ FROM python:3.10-slim
 
 WORKDIR /app
 
-RUN pip install --no-cache-dir streamlit plotly requests
-
-COPY dashboard.py .
+COPY web/ web/
+COPY serve_portal.py .
 
 EXPOSE 8501
 
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/_stcore/health', timeout=3)" || exit 1
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8501/', timeout=3)" || exit 1
 
-CMD ["streamlit", "run", "dashboard.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# 管理门户: 访问 / 自动定位到登录页, 前端直连 api:8000（跨域由后端 CORS 放行）
+CMD ["python", "serve_portal.py"]

@@ -16,13 +16,19 @@
 本地启动: uvicorn server:app --reload --port 8000
 """
 
+import hashlib
+import hmac
 import json
 import os
+import secrets
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
 import pymysql
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security.utils import get_authorization_scheme_param
 from pydantic import BaseModel, Field
 
 # ---------- 配置 ----------
@@ -36,6 +42,59 @@ DB_CONFIG = {
 }
 
 app = FastAPI(title="自习室座位监测系统", version="0.1.0")
+
+# 门户(8501) 与大屏(8000) 不同源, 放行跨域
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
+)
+
+# ---------- 用户认证配置 ----------
+TOKEN_SECRET = os.environ.get("TOKEN_SECRET", secrets.token_hex(32))
+TOKEN_TTL = 7 * 24 * 3600        # token 有效期 7 天
+
+
+def _hash_pwd(password: str, salt: str = None):
+    """PBKDF2-SHA256 口令哈希, 返回 (salt, hash) 十六进制"""
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 120_000)
+    return salt, digest.hex()
+
+
+def _verify_pwd(password: str, salt: str, expected: str) -> bool:
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), bytes.fromhex(salt), 120_000)
+    return hmac.compare_digest(digest.hex(), expected)
+
+
+def _b64(s: str) -> str:
+    import base64
+    return base64.urlsafe_b64encode(s.encode()).decode().rstrip("=")
+
+
+def _unb64(s: str) -> str:
+    import base64
+    return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4)).decode()
+
+
+def _make_token(uid: int, username: str, role: str) -> str:
+    payload = _b64(json.dumps({"uid": uid, "username": username, "role": role,
+                               "exp": int(time.time()) + TOKEN_TTL}))
+    sig = hmac.new(TOKEN_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+    return f"{payload}.{sig}"
+
+
+def _parse_token(token: str) -> Optional[dict]:
+    try:
+        payload, sig = token.split(".")
+        expect = hmac.new(TOKEN_SECRET.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(sig, expect):
+            return None
+        data = json.loads(_unb64(payload))
+        if data.get("exp", 0) < time.time():
+            return None
+        return data
+    except Exception:
+        return None
 
 
 def get_db():
@@ -95,6 +154,18 @@ CREATE TABLE IF NOT EXISTS camera_alerts (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
+CREATE_USERS_SQL = """
+CREATE TABLE IF NOT EXISTS users (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    username VARCHAR(32) NOT NULL UNIQUE,
+    password_salt CHAR(32) NOT NULL,
+    password_hash CHAR(64) NOT NULL,
+    role VARCHAR(16) NOT NULL DEFAULT 'user' COMMENT 'admin/user',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    last_login DATETIME DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+"""
+
 
 @app.on_event("startup")
 def init_db():
@@ -120,6 +191,13 @@ def init_db():
             cur.execute(CREATE_RECORDS_SQL)
             cur.execute(CREATE_SESSIONS_SQL)
             cur.execute(CREATE_ALERTS_SQL)
+            cur.execute(CREATE_USERS_SQL)
+            # 种子管理员: 首次启动写入 admin/admin123（之后可改密码）
+            cur.execute("SELECT COUNT(*) AS n FROM users")
+            if cur.fetchone()["n"] == 0:
+                salt, ph = _hash_pwd("admin123")
+                cur.execute("INSERT INTO users (username, password_salt, password_hash, role) "
+                            "VALUES ('admin', %s, %s, 'admin')", (salt, ph))
         db.commit()
     finally:
         db.close()
@@ -453,6 +531,71 @@ def daily(day: Optional[str] = None, camera_id: str = "cam_01"):
         db.close()
 
 
+@app.get("/api/trends")
+def trends(days: int = 7, camera_id: Optional[str] = None):
+    """历史规律分析: 最近 N 天 × 24 小时的平均占用率热力矩阵 + 黄金时段推荐
+    - camera_id 为空时统计全馆（各教室 occupied 占 total_seats 的总占比）
+    - 返回 heatmap[day][hour] = 平均占用率(0~1), days 按最近到最远排列
+    - golden: 全周(按星期×小时聚合)空座率最高的 Top 时段"""
+    days = max(2, min(days, 30))
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            # 按天×小时聚合平均占用率: 单教室用该教室占用率, 全馆用 SUM(occ)/SUM(seats)
+            if camera_id:
+                cur.execute(
+                    "SELECT DATE(ts) AS d, HOUR(ts) AS h, "
+                    "       AVG(r.occupied_count / rm.total_seats) AS avg_rate "
+                    "FROM records r JOIN rooms rm ON rm.camera_id = r.camera_id "
+                    "WHERE r.camera_id=%s AND ts >= CURDATE() - INTERVAL %s DAY "
+                    "GROUP BY DATE(ts), HOUR(ts)",
+                    (camera_id, days - 1))
+            else:
+                # 全馆: 每个采样时刻的整体占用率 = 各教室占用之和 / 座位总数, 再按时段平均
+                cur.execute(
+                    "SELECT t.d AS d, t.h AS h, AVG(t.rate) AS avg_rate FROM ("
+                    "  SELECT DATE(r.ts) AS d, HOUR(r.ts) AS h, r.ts, "
+                    "         SUM(r.occupied_count) / (SELECT SUM(total_seats) FROM rooms) AS rate "
+                    "  FROM records r WHERE r.ts >= CURDATE() - INTERVAL %s DAY "
+                    "  GROUP BY r.ts, d, h"
+                    ") t GROUP BY t.d, t.h",
+                    (days - 1,))
+            rows = cur.fetchall()
+    finally:
+        db.close()
+
+    # 组装热力矩阵
+    today = datetime.now().date()
+    date_list = [today - timedelta(days=i) for i in range(days)]      # 最近→最远
+    hm = {d.strftime("%Y-%m-%d"): [None] * 24 for d in date_list}
+    for r in rows:
+        key = r["d"].strftime("%Y-%m-%d") if hasattr(r["d"], "strftime") else str(r["d"])
+        if key in hm and 0 <= r["h"] <= 23:
+            hm[key][r["h"]] = round(float(r["avg_rate"] or 0), 4)
+
+    # 黄金时段: 按星期×小时聚合（样本不足的跳过）, 取空座率最高 Top3
+    by_dow_hour = {}
+    for r in rows:
+        d = r["d"]
+        dow = d.weekday() if hasattr(d, "weekday") else 0
+        by_dow_hour.setdefault((dow, r["h"]), []).append(float(r["avg_rate"] or 0))
+    golden = []
+    for (dow, h), vals in by_dow_hour.items():
+        if len(vals) >= max(1, days // 7):   # 至少出现过一天的样本
+            golden.append({"dow": dow, "hour": h,
+                           "free_rate": round(1 - sum(vals) / len(vals), 4),
+                           "samples": len(vals)})
+    golden.sort(key=lambda x: -x["free_rate"])
+    return {
+        "days": days,
+        "camera_id": camera_id,
+        "dates": [d.strftime("%Y-%m-%d") for d in date_list],
+        "heatmap": hm,
+        "golden": golden[:3],
+        "peak": sorted(golden, key=lambda x: x["free_rate"])[:3],   # 最挤时段(反面)
+    }
+
+
 @app.get("/api/health")
 def health():
     return {"status": "ok"}
@@ -512,12 +655,12 @@ OLLAMA_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5:7b-instruct-q4_K_M")
 
 # 提供给 LLM 的库表说明（只读视图描述）
 _SCHEMA_DESC = """数据库 study_room, 表:
-1. rooms: 教室注册表
+1. rooms: 教室注册表（只有静态属性, 没有任何人数/占用列!）
    - camera_id VARCHAR 教室标识(英文, 如 room_201/testroom)
    - name VARCHAR 教室中文名称(如 三教201)
    - total_seats INT 座位总数
    注意: 用户提到英文标识(如 testroom)时用 camera_id 匹配, 提到中文名称时用 name 匹配; 优先 camera_id。
-2. records: 边缘端周期上报的实时监测记录
+2. records: 边缘端周期上报的实时监测记录（所有人数/占用数据只在这里!）
    - ts DATETIME 时间
    - camera_id VARCHAR 教室标识
    - head_count INT 检测人数
@@ -532,7 +675,22 @@ _SCHEMA_DESC = """数据库 study_room, 表:
    - end_time DATETIME 离开时间
    - duration_sec INT 在场秒数
 4. camera_alerts: 摄像头异常告警
-   - ts DATETIME, camera_id, alert_type(blocked遮挡/moved移动/recovered恢复), message"""
+   - ts DATETIME, camera_id, alert_type(blocked遮挡/moved移动/recovered恢复), message
+
+历史规律问题提示: "过去一周哪天/哪个时段人最多(最少)" 可用 SQL 查询, 如:
+SELECT DAYOFWEEK(ts) AS dow, HOUR(ts) AS h, AVG(head_count) AS avg_heads
+FROM records WHERE ts >= NOW() - INTERVAL 7 DAY GROUP BY dow, h ORDER BY avg_heads DESC;
+"明天/今天什么时间去最空" 同理取 avg 值最低的时段。
+
+参考示例（各教室当前空座数, 按空座降序）:
+SELECT r.camera_id, r.name, r.total_seats - t.occupied_count AS free_seats
+FROM rooms r JOIN (
+    SELECT camera_id, occupied_count FROM records rec
+    WHERE ts = (SELECT MAX(ts) FROM records r2 WHERE r2.camera_id = rec.camera_id)
+) t ON t.camera_id = r.camera_id
+ORDER BY free_seats DESC;
+
+重要: rooms 表没有 occupied_count/head_count 列, 任何人数类数据必须 JOIN records 表获得。"""
 
 
 def _ollama_chat(prompt: str, system: str = "", timeout: int = 120) -> str:
@@ -600,9 +758,9 @@ def ask(data: AskIn):
     if sql is None:
         raise HTTPException(400, f"生成的 SQL 不安全或非查询语句: {raw_sql!r}")
 
-    # ---- 2) 执行（只读, 限 50 行）; 失败时带错误回喂 LLM 重生成一次 ----
+    # ---- 2) 执行（只读, 限 50 行）; 失败时带错误回喂 LLM 重生成（最多 3 次） ----
     rows = None
-    for attempt in range(2):
+    for attempt in range(3):
         db = get_db()
         try:
             with db.cursor() as cur:
@@ -638,6 +796,189 @@ def ask(data: AskIn):
         answer = f"(SQL 执行成功但组织答案失败: {e})\n原始数据: {rows_text}"
 
     return {"question": data.question, "sql": sql, "rows": rows, "answer": answer}
+
+
+# ---------- 用户认证与用户管理（8501 门户） ----------
+
+class RegisterIn(BaseModel):
+    username: str = Field(..., min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_\u4e00-\u9fa5]+$")
+    password: str = Field(..., min_length=6, max_length=64)
+    nickname: Optional[str] = None   # 预留
+
+
+class LoginIn(BaseModel):
+    username: str
+    password: str
+
+
+class UserOut(BaseModel):
+    id: int
+    username: str
+    role: str
+    created_at: Optional[datetime] = None
+    last_login: Optional[datetime] = None
+
+
+class UserCreateIn(BaseModel):
+    username: str = Field(..., min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_\u4e00-\u9fa5]+$")
+    password: str = Field(..., min_length=6, max_length=64)
+    role: str = Field("user", pattern=r"^(admin|user)$")
+
+
+class UserUpdateIn(BaseModel):
+    role: Optional[str] = Field(None, pattern=r"^(admin|user)$")
+    password: Optional[str] = Field(None, min_length=6, max_length=64)
+
+
+# FastAPI 依赖: 解析 Bearer Token
+from fastapi import Header  # noqa: E402
+
+
+def current_user(authorization: Optional[str] = Header(None)) -> dict:
+    if not authorization:
+        raise HTTPException(401, "未登录")
+    scheme, token = get_authorization_scheme_param(authorization)
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(401, "无效的认证头")
+    data = _parse_token(token)
+    if not data:
+        raise HTTPException(401, "登录已过期, 请重新登录")
+    return data
+
+
+def require_admin(user: dict = Depends(current_user)) -> dict:
+    if user.get("role") != "admin":
+        raise HTTPException(403, "需要管理员权限")
+    return user
+
+
+@app.post("/api/auth/register", response_model=UserOut)
+def register(data: RegisterIn):
+    """自助注册（一律普通用户, 管理员由后台创建）"""
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE username=%s", (data.username,))
+            if cur.fetchone():
+                raise HTTPException(400, "用户名已存在")
+            salt, ph = _hash_pwd(data.password)
+            cur.execute("INSERT INTO users (username, password_salt, password_hash, role) "
+                        "VALUES (%s, %s, %s, 'user')", (data.username, salt, ph))
+            uid = cur.lastrowid
+            cur.execute("SELECT id, username, role, created_at, last_login FROM users WHERE id=%s", (uid,))
+            row = cur.fetchone()
+        db.commit()
+        return UserOut(**row)
+    finally:
+        db.close()
+
+
+@app.post("/api/auth/login")
+def login(data: LoginIn):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE username=%s", (data.username,))
+            row = cur.fetchone()
+        if not row or not _verify_pwd(data.password, row["password_salt"], row["password_hash"]):
+            raise HTTPException(401, "用户名或密码错误")
+        with db.cursor() as cur:
+            cur.execute("UPDATE users SET last_login=NOW() WHERE id=%s", (row["id"],))
+        db.commit()
+        token = _make_token(row["id"], row["username"], row["role"])
+        return {"token": token,
+                "user": UserOut(id=row["id"], username=row["username"], role=row["role"],
+                                created_at=row["created_at"], last_login=datetime.now())}
+    finally:
+        db.close()
+
+
+@app.get("/api/auth/me", response_model=UserOut)
+def me(user: dict = Depends(current_user)):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT id, username, role, created_at, last_login FROM users WHERE id=%s",
+                        (user["uid"],))
+            row = cur.fetchone()
+        if not row:
+            raise HTTPException(401, "用户不存在")
+        return UserOut(**row)
+    finally:
+        db.close()
+
+
+@app.get("/api/admin/users", response_model=list[UserOut])
+def admin_list_users(_: dict = Depends(require_admin)):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT id, username, role, created_at, last_login FROM users ORDER BY id")
+            return [UserOut(**r) for r in cur.fetchall()]
+    finally:
+        db.close()
+
+
+@app.post("/api/admin/users", response_model=UserOut)
+def admin_create_user(data: UserCreateIn, _: dict = Depends(require_admin)):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE username=%s", (data.username,))
+            if cur.fetchone():
+                raise HTTPException(400, "用户名已存在")
+            salt, ph = _hash_pwd(data.password)
+            cur.execute("INSERT INTO users (username, password_salt, password_hash, role) "
+                        "VALUES (%s, %s, %s, %s)", (data.username, salt, ph, data.role))
+            uid = cur.lastrowid
+            cur.execute("SELECT id, username, role, created_at, last_login FROM users WHERE id=%s", (uid,))
+            row = cur.fetchone()
+        db.commit()
+        return UserOut(**row)
+    finally:
+        db.close()
+
+
+@app.put("/api/admin/users/{uid}", response_model=UserOut)
+def admin_update_user(uid: int, data: UserUpdateIn, admin: dict = Depends(require_admin)):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT * FROM users WHERE id=%s", (uid,))
+            row = cur.fetchone()
+            if not row:
+                raise HTTPException(404, "用户不存在")
+            if data.role:
+                if row["id"] == admin["uid"]:
+                    raise HTTPException(400, "不能修改自己的角色")
+                cur.execute("UPDATE users SET role=%s WHERE id=%s", (data.role, uid))
+            if data.password:
+                salt, ph = _hash_pwd(data.password)
+                cur.execute("UPDATE users SET password_salt=%s, password_hash=%s WHERE id=%s",
+                            (salt, ph, uid))
+            cur.execute("SELECT id, username, role, created_at, last_login FROM users WHERE id=%s", (uid,))
+            new = cur.fetchone()
+        db.commit()
+        return UserOut(**new)
+    finally:
+        db.close()
+
+
+@app.delete("/api/admin/users/{uid}")
+def admin_delete_user(uid: int, admin: dict = Depends(require_admin)):
+    if uid == admin["uid"]:
+        raise HTTPException(400, "不能删除自己")
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE id=%s", (uid,))
+            if not cur.fetchone():
+                raise HTTPException(404, "用户不存在")
+            cur.execute("DELETE FROM users WHERE id=%s", (uid,))
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
 
 
 # ---------- 可视化大屏（web/index.html） ----------
