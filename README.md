@@ -2,6 +2,10 @@
 
 基于边缘计算的多人实时监测系统：在每间教室的摄像头上运行人头检测模型，实时统计**当前人数、空余座位、在座时长**，监测**摄像头异常**，并通过本地大模型提供**自然语言数据问答**（"今天几点人最少？"）。适用于自习室/图书馆的运营管理。
 
+系统包含三类前端：**挂墙可视化大屏**（实时监控）、**双角色管理门户**（普通用户：占用总览/收藏/历史规律/空座提醒/AI 问答；管理员：教室与用户管理）、**登录注册页**（访客可看全馆实时统计）。
+
+> 面试/求职读者请配合 [PROJECT_INTRO.md](PROJECT_INTRO.md)（项目详细介绍 + 面试要点指南）阅读。
+
 > 本文档面向不熟悉本项目的读者，从零开始解释系统的每个部分是如何实现的，包括模型怎么训练出来、数据怎么流动、每个模块内部的算法逻辑。
 >
 > python edge_agent.py --source 0 --camera-id room_201 --interval 5
@@ -43,10 +47,10 @@
 │  ② 后端服务 server.py:8000           （中枢: 收数据/存库/供查询/调AI）       │
 │     │                    │                                                 │
 │     ▼                    ▼                                                │
-│  ③ MySQL 库 study_room   ⑤ Ollama 本地大模型（qwen2.5:7b, Text2SQL）       │
+│  ③ MySQL 库 study_room   ⑤ Ollama 本地大模型（qwen2.5:1.5b, Text2SQL）      │
 │     │                                                                      │
 │     ▼                                                                      │
-│  ④ 可视化大屏 /ui/ (8000端口)  +  管理页 dashboard.py:8501                  │
+│  ④ 可视化大屏 /ui/ (8000端口)  +  管理门户 portal (8501端口, 双角色)        │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,8 +88,9 @@
 | 后端 | FastAPI + PyMySQL | 异步、自动 Swagger 文档、轻量 |
 | 数据库 | MySQL 8.0 | 时序快照 + 会话记录，关系型足够 |
 | 大屏 | 单文件 HTML + ECharts | 零构建、挂任意屏幕、风格完全可控 |
-| 管理页 | Streamlit | 表单/上传/聊天这类内部工具开发效率最高 |
-| LLM | Ollama + qwen2.5:7b | 本地运行，数据不出内网 |
+| 管理门户 | 原生 JS 单页应用（portal.html） | 与大屏同风格、零构建；含认证/收藏/历史规律/空座提醒 |
+| 认证 | PBKDF2 + HMAC 签名 Token | 无 JWT 依赖、无状态验证 |
+| LLM | Ollama + qwen2.5:1.5b（可切 7b） | 本地运行，数据不出内网；1.5b 热响应 ~1.7s |
 
 ---
 
@@ -256,14 +261,22 @@ threshold = np.where(pred_w * ratio < 32, 0.15, 0.35)
 2. **相对时间跳动**：每张卡片的上报时间显示"刚刚 → 14秒前 → 3分钟前"**每秒更新**，10 秒内绿色、超 1 小时变红——一眼看出哪间教室掉线
 3. **趋势曲线流式追加**：曲线独立 2.5 秒刷新（比主刷新快一倍），新数据点带 600ms 动画滑入、60 点滚动窗口旧点滑出、末端呼吸光点随最新值跳动；同一分钟内的多次上报只更新最后一个点（平滑不抖）
 
-**管理页（dashboard.py，Streamlit）**
+**管理门户（web/portal.html，:8501，原生 JS 单页应用）**
 
-- **教室管理**：注册/修改（名称/座位数/地址）/删除（可选级联清历史数据）
-- **模拟测试**：上传视频或本机摄像头，绑定任意教室实时模拟人流（详见第八章）
-- **AI 日报 + 聊天问答**：与大屏共用 `/api/ask`
-- 自动刷新用 Streamlit **fragment 局部刷新**（`run_every=5`）：只重跑数据区块，不闪烁、不打断聊天交互
+由轻量静态服务器 [serve_portal.py](serve_portal.py) 托管（根路径自动定位登录页，支持 `/login` `/portal` 语义路由）。登录态存 sessionStorage，进入后左侧竖排导航切换视图。
 
-**为什么两个前端**：大屏是纯静态页（挂任意屏幕、低资源、视觉风格要求高），管理页是数据工具（表单/上传/聊天，Streamlit 开发效率最高）。各用最合适的工具。
+- **登录页**：左右分栏——左侧品牌区（Logo + 特性卡 + **未登录可见的实时统计**：教室数/座位数/当前空座），右侧登录/注册滑块切换
+- **占用总览**（所有角色）：教室卡片（进度条流光 + 悬停 3D 倾斜 + 点击涟漪）、搜索 + 占用状态筛选（宽松/适中/紧张）、⭐收藏（localStorage 持久化，可只看收藏）、座位变化提示
+- **教室详情弹窗**：座位示意点阵（按占用数从左至右填充，绿=占用/蓝=空闲，悬停放大辉光 + 跟随提示）+ 24h 趋势双曲线（占用/人数 + 均值线，超 200 点降采样）
+- **历史规律页签**（"什么时候去自习"决策）：
+  - 黄金时段 Top3 卡片（如"周一 16:00–17:00 空座率 88%"）+ 高峰"避开"时段卡片
+  - 7 天 × 24 小时占用率热力图（ECharts heatmap，深蓝→红渐变，悬停数值）
+  - 近 7 天日均值柱状图（渐变柱 + 均值虚线）；教室筛选（全馆/单教室）
+- **空座提醒**：授权浏览器 Notification 后，每 15 秒检查收藏教室，空座从 <3 翻转为 ≥3 时弹系统通知（5 分钟冷却）
+- **AI 助手**：聊天气泡 + 打字动画 + 快捷提问芯片（含"一周哪些时段最空""明天几点去最空"），可展开 SQL
+- **管理员专属**：教室管理（新增/编辑/删除，可选级联清历史数据）、用户管理（新增/升降管理员/重置密码/删除，自我保护：不能删自己）
+
+**为什么弃用 Streamlit**：早期管理页用 Streamlit 开发效率高，但无法与大屏保持统一视觉风格（深色科技风、动效、鼠标交互），且容器镜像臃肿（~900MB）。改为原生 JS 单页应用后镜像缩至 ~150MB，风格完全统一。
 
 ### 3.6 模块六：AI 问答（Text2SQL + 本地 Ollama）
 
@@ -275,7 +288,7 @@ threshold = np.where(pred_w * ratio < 32, 0.15, 0.35)
 用户问题 "今天几点人最少？"
   + 提示词（表结构 Schema + 规则: 只生成 SELECT）
         ↓ ①
-Ollama (qwen2.5:7b) 生成 SQL
+Ollama (qwen2.5:1.5b) 生成 SQL
         ↓ ②
 安全校验:
   - 只放行 SELECT / WITH 开头
@@ -284,7 +297,7 @@ Ollama (qwen2.5:7b) 生成 SQL
         ↓ ③
 执行: 包装为子查询, 强制 LIMIT 50
         ↓ ④
-若 SQL 报错 → 把 MySQL 错误信息回喂大模型重新生成（自愈重试 1 次）
+若 SQL 报错 → 把 MySQL 错误信息回喂大模型重新生成（自愈重试, 最多 2 次）
         ↓ ⑤
 查询结果 + 原问题 → 大模型组织中文回答
 （时长自动换算: 13500秒 → "3小时45分"）
@@ -295,13 +308,20 @@ Ollama (qwen2.5:7b) 生成 SQL
 - "现在有空座位吗？" → 正确取每教室**最新**记录算空位 ✓
 - **"删掉 records 表"** → 安全校验拦截，数据库无法被写操作触达 ✓
 
-**自愈重试的量化效果**：7B 小模型生成 SQL 一次成功率约 70%，错误信息回喂重试一次后约 95%——工程手段弥补小模型能力。
+**自愈重试的量化效果**：小模型生成 SQL 一次成功率约 70%，错误信息回喂重试后约 95%——工程手段弥补小模型能力。模型从 7b 降至 1.5b 后，靠提示词强化（schema 明确"rooms 表没有任何人数列" + 内嵌正确 SQL 示例）保持准确率，热响应从几十秒降至 **~1.7 秒**。
+
+### 3.7 模块七：用户认证与权限（server.py）
+
+- **口令安全**：PBKDF2-HMAC-SHA256（150k 迭代 + 16 字节随机盐）哈希入库，明文口令不落库
+- **无状态 Token**：`base64(用户名|过期时间)` + HMAC-SHA256 签名（服务器密钥），验证不查库，7 天有效
+- **首次启动自动建表 + 种子管理员**（admin/admin123，生产环境应改密）
+- **权限分层**：管理接口校验 `role=admin`（普通用户 403）；自我保护——不能删除自己、不能改自己角色
 
 ---
 
 ## 四、数据库设计
 
-库名 `study_room`，四张表，**启动时自动建库建表**（`CREATE DATABASE IF NOT EXISTS` + `CREATE TABLE IF NOT EXISTS`），旧表自动加列迁移（如 rooms 补 location 字段）。
+库名 `study_room`，五张表，**启动时自动建库建表**（`CREATE DATABASE IF NOT EXISTS` + `CREATE TABLE IF NOT EXISTS`），旧表自动加列迁移（如 rooms 补 location 字段）。
 
 ### rooms —— 教室注册表
 
@@ -340,6 +360,15 @@ Ollama (qwen2.5:7b) 生成 SQL
 | alert_type | VARCHAR(16) | blocked（遮挡）/ moved（移动）/ recovered（恢复） |
 | message | VARCHAR(255) | 人话描述 |
 
+### users —— 门户账号（自动建表 + 种子管理员 admin）
+
+| 字段 | 类型 | 说明 |
+|---|---|---|
+| username | VARCHAR(32) PK | 登录名 |
+| password_hash | VARCHAR(128) | PBKDF2-HMAC-SHA256（150k 迭代 + 16 字节盐） |
+| role | VARCHAR(16) | admin / user |
+| created_at | DATETIME | 注册时间 |
+
 ### 设计要点
 
 - **占用数封顶**：`occupied = min(检测数, total_seats)` 在 `/api/report` 入库前执行。有人站着/瞬时误检会让检测数超座位数，封顶保证"空位 = 座位 − 占用"永远不为负
@@ -369,11 +398,25 @@ POST /api/report
 
 | 接口 | 参数 | 返回要点 |
 |---|---|---|
-| `GET /api/overview` | - | 全部教室聚合：每间的最新人数/占用/座位数 + 最后上报时间 |
+| `GET /api/overview` | - | 全部教室聚合：每间的最新人数/占用/座位数 + 最后上报时间（summary 含汇总 KPI） |
 | `GET /api/stats` | camera_id | 单教室最新快照（大屏详情页数据源） |
 | `GET /api/history` | hours, camera_id | 时间序列点（24h 趋势曲线） |
 | `GET /api/daily` | date, camera_id | 按小时聚合（AI 日报数据源） |
+| `GET /api/trends` | days, camera_id | **历史规律**：7天×24h 占用率热力矩阵 + 黄金/高峰时段 Top3（camera_id 空为全馆） |
 | `GET /api/duration` | date, camera_id | 会话聚合：会话数/人均时长/累计/最长 |
+
+### 认证与管理（门户）
+
+```http
+POST /api/auth/register {"username":"stu01","password":"***"}   → 自动登录返回 token
+POST /api/auth/login    {"username":"admin","password":"***"}  → {"token":"...","user":{...}}
+GET  /api/auth/stats                                       → 登录页实时统计(无需 token)
+GET  /api/admin/users      [需管理员 token]                 → 用户列表
+POST /api/admin/users      [需管理员 token]                 → 新增用户(可选角色)
+PUT  /api/admin/users/{name}/role  [需管理员 token]          → 升降管理员 / 重置密码 / 删除
+```
+
+所有需登录接口走 `Authorization: Bearer <token>`（HMAC 签名验证）；管理接口额外校验 role=admin。
 
 ### 管理类
 
@@ -413,41 +456,53 @@ GET /api/alerts?limit=5
 
 ## 七、快速开始
 
-### 7.1 环境要求
+### 7.1 方式一：Docker 一键部署（推荐）
 
-- Windows 10/11 + NVIDIA 显卡（DirectML 推理，无需 CUDA）
-- Python 3.10+（conda 环境名 `face_test`）
-- MySQL 8.0（本机或 Docker）
-- Ollama + 模型：`ollama pull qwen2.5:7b`
+```powershell
+# 1. 准备环境变量
+Copy-Item .env.example .env    # 编辑: MYSQL_PASSWORD / OLLAMA_MODEL / TOKEN_SECRET
 
-### 7.2 安装依赖
+# 2. 拉起 4 容器（api + mysql + dashboard + ollama）
+docker compose up -d --build
+
+# 3. （可选）拉取 AI 模型
+docker exec studysense-ollama ollama pull qwen2.5:1.5b
+```
+
+打开：
+
+| 页面 | 地址 | 说明 |
+|---|---|---|
+| **管理门户** | http://localhost:8501 | 根路径自动定位登录页；种子账号 admin/admin123 |
+| **可视化大屏** | http://localhost:8000/ui | 挂墙监控 |
+| **API 文档** | http://localhost:8000/docs | Swagger |
+
+MySQL 映射到宿主机 **3307**（避开本机 3306）；Ollama 直接挂载宿主机模型目录，已有模型免二次下载。
+
+### 7.2 方式二：本地开发运行
+
+环境要求：Windows + NVIDIA 显卡（DirectML 推理，无需 CUDA）、Python 3.10+（conda 环境 `face_test`）、本机 MySQL 8.0、Ollama。
 
 ```powershell
 conda create -n face_test python=3.10 -y
 conda activate face_test
 pip install fastapi uvicorn pymysql requests onnxruntime-directml opencv-python numpy streamlit plotly
-```
-
-### 7.3 启动（三个终端）
-
-```powershell
-conda activate face_test
 
 # 终端 1: 后端（含大屏; 密码走环境变量, 不落盘）
 $env:MYSQL_PASSWORD="你的MySQL密码"
 uvicorn server:app --port 8000
 
-# 终端 2: 管理页
-streamlit run dashboard.py
+# 终端 2: 管理门户（轻量静态服务, 根路径即登录页）
+python serve_portal.py
 
 # 终端 3: 边缘采集（真实摄像头; 测试视频则 --source 换文件路径）
 python edge_agent.py --source 0 --camera-id room_201 --interval 30
+
+# 终端 4（可选, 本地开发工具）: Streamlit 模拟测试页
+streamlit run dashboard.py
 ```
 
-打开：
-
-- **大屏** http://127.0.0.1:8000/ui/
-- **管理页** http://127.0.0.1:8501（先在"教室管理"注册 camera_id 与启动参数一致的教室，填好总座位数）
+打开：大屏 http://127.0.0.1:8000/ui/ ，门户 http://localhost:8501/ 。
 
 ---
 
@@ -455,7 +510,9 @@ python edge_agent.py --source 0 --camera-id room_201 --interval 30
 
 没有真实自习室时的完整测试动线（也是开发期的主要验证方式）：
 
-1. **管理页 → 🎬 模拟测试**
+> 模拟测试入口在 **dashboard.py**（Streamlit，本地开发工具，`streamlit run dashboard.py` 启动）——Docker 部署的门户/大屏不含此页，模拟数据同样会入库并实时驱动容器中的大屏与门户。
+
+1. **模拟测试页（dashboard.py） → 🎬 模拟测试**
 2. 选择目标教室（下拉任意已注册教室）
 3. 三种源任选：**上传视频**（页面上直接拖入 mp4）/ **本地路径** / **本机摄像头开关**（优先级最高，开着就覆盖视频路径）
 4. 调整上报间隔（5~60 秒）→ 「▶ 开始模拟」
@@ -471,22 +528,26 @@ python edge_agent.py --source 0 --camera-id room_201 --interval 30
 
 ```
 face_test/
-├── server.py               # FastAPI 后端: 15 个接口 + 自动建库建表 + Text2SQL
+├── server.py               # FastAPI 后端: 接口 + 自动建库建表 + Text2SQL + 认证/权限
 ├── edge_agent.py            # 边缘采集端: 取流→检测→跟踪→异常守卫→周期上报
 ├── head_detector.py         # 人头检测器: letterbox/ONNX 推理/分级阈值/NMS
 ├── tracker.py               # IOU+质心跟踪器: 轨迹确认/老化/会话归档
 ├── camera_guard.py          # 摄像头异常守卫: 遮挡/移动检测
-├── dashboard.py             # Streamlit 管理页: 教室管理/模拟测试/AI 问答
+├── dashboard.py             # Streamlit 模拟测试页（本地开发工具, 非部署件）
+├── serve_portal.py          # 门户轻量静态服务器: 根路径自动定位登录页
 ├── web/index.html           # 可视化大屏（单文件, ECharts CDN）
+├── web/portal.html          # 管理门户 SPA（登录/注册 + 用户端 + 管理端）
+├── web/logo.svg             # 全站 Logo + favicon
 ├── head_detect_1280.onnx   # 检测模型（精度优先）
 ├── head_detect_960.onnx     # 检测模型（速度折中）
 ├── convert_crowdhuman.py    # odgt→YOLO 数据转换（训练用）
-├── docker-compose.yml       # 一键编排: API + MySQL + dashboard + Ollama
+├── docker-compose.yml       # 一键编排: API + MySQL + 门户 + Ollama
 ├── Dockerfile               # API 服务镜像
-├── Dockerfile.dashboard     # Streamlit 管理页镜像
-├── .env.example             # 环境变量模板（复制为 .env 填密码）
+├── Dockerfile.dashboard     # 门户静态服务镜像（~150MB）
+├── .env.example             # 环境变量模板（复制为 .env 填密码/模型/密钥）
 ├── test_room.mp4            # 测试视频
-└── README.md                # 本文档
+├── README.md                # 需求与技术文档（本文档）
+└── PROJECT_INTRO.md         # 项目详细介绍 + 面试要点
 ```
 
 ---
@@ -499,9 +560,11 @@ face_test/
 | 检测 mAP50-95 | 0.546 | 同上 |
 | 单帧推理耗时 | 11.9ms @960 / 152ms @1280 | RTX 5070 Laptop, DirectML |
 | 端到端数据延迟 | ≤ 5 秒 | 上报周期 30s + 大屏轮询 5s |
-| AI 问答一次成功率 | ~70% → ~95%（自愈重试后） | qwen2.5:7b, 30+ 个真实问题 |
+| AI 问答 SQL 成功率 | ~70% → ~95%（自愈重试后） | 30+ 个真实问题 |
+| AI 热响应 | ~1.7 秒 | qwen2.5:1.5b（提示词强化后保持准确率） |
 | 跟踪器依赖 | 纯 NumPy | 无第三方跟踪库 |
 | 40 人真实自习室视频 | 39~44 人（跟踪平滑无抖动） | test_room.mp4 全链路实测 |
+| 门户容器镜像 | ~150MB | 原生 JS SPA（原 Streamlit 版 ~900MB） |
 
 ---
 
@@ -517,3 +580,7 @@ face_test/
 | 6 | 零模型异常守卫 | 训练异常分类模型 | 亮度+纹理+差分三信号已足够，省一个模型 |
 | 7 | 单文件大屏 | Vue/React 工程 | 内部工具零构建维护成本最低 |
 | 8 | 占用数入库封顶 | 查询时封顶 | 脏数据不落库，AI 裸查 SQL 也拿到干净数据（真实踩坑：AI 问答与统计口径不一致的 bug 由此修复） |
+| 9 | 管理门户用原生 JS SPA | 继续 Streamlit | 与大屏统一深色科技风与动效；镜像 900MB→150MB；代价是放弃了 Streamlit 的表单效率 |
+| 10 | AI 模型 1.5b + 提示词强化 | 7b（更准但慢） | 7b 热响应几十秒体验差；schema 明确约束 + 内嵌正确 SQL 示例后 1.5b 准确率达标，响应 1.7s |
+| 11 | 空座提醒纯前端实现 | 后端 WebSocket 推送 | Notification API + 15s 轮询已够用，零后端改造成本；将来量大再升级 |
+| 12 | HMAC 签名 Token | JWT 库 | 无第三方依赖、逻辑 20 行、无状态验证；内部系统不需要 JWT 生态 |
