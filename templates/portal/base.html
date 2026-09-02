@@ -28,6 +28,7 @@
     <a class="ntab{% if active == 'overview' %} on{% endif %}" href="/portal/overview">📊 占用总览</a>
     {% if user.role != 'admin' %}
     <a class="ntab{% if active == 'trends' %} on{% endif %}" href="/portal/trends">📅 历史规律</a>
+    <a class="ntab{% if active == 'forecast' %} on{% endif %}" href="/portal/forecast">🔮 空位预测</a>
     {% endif %}
     <a class="ntab{% if active == 'ai' %} on{% endif %}" href="/portal/ai">🤖 AI 助手</a>
     {% if user.role == 'admin' %}

@@ -241,6 +241,15 @@ tbody tr:hover { background: rgba(0,160,255,.07); }
   background: rgba(0,212,255,.08); border: 1px solid rgba(0,212,255,.3); border-radius: 10px; font-size: 13px; }
 .notify-bar.on { display: flex; }
 
+/* ============ 运营预测 ============ */
+.forecast-note { color: #7dc5ff; font-size: 12px; margin: -3px 0 14px; }
+.forecast-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+.forecast-card { min-height: 150px; }
+.forecast-time { color: #fff; font-size: 16px; font-weight: 700; margin-bottom: 12px; }
+.forecast-room { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid #173558; font-size: 13px; }
+.forecast-free { color: #00e676; font-weight: 800; white-space: nowrap; }
+.forecast-meta { color: #5a7fb5; font-size: 11px; margin-top: 10px; }
+
 /* ============ 座位示意格子 ============ */
 .sc {
   border-radius: 4px; cursor: default;

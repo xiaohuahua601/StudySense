@@ -1097,6 +1097,72 @@ def require_admin(user: dict = Depends(current_user)) -> dict:
     return user
 
 
+@app.get("/api/forecast")
+def forecast(hours: int = 3, _user: dict = Depends(current_user)):
+    """运营预测：以过去 12 周相同星期、相同时段的日均人数预测未来空位。
+
+    这是可解释的基线模型，而不是座位级识别：预测人数后用教室总座位数相减。
+    """
+    if _user.get("role") == "admin":
+        raise HTTPException(403, "空位预测面向普通用户")
+    hours = max(1, min(hours, 12))
+    now = datetime.now().replace(minute=0, second=0, microsecond=0)
+    targets = [now + timedelta(hours=i) for i in range(1, hours + 1)]
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            slots = []
+            for target in targets:
+                # 第一层：同星期、同小时最贴近未来场景；记录不足的教室会在第二层回退。
+                cur.execute(
+                    "SELECT rm.camera_id, rm.name, rm.total_seats, "
+                    "       AVG(d.avg_occupied) AS predicted_occupied, COUNT(d.day) AS samples "
+                    "FROM rooms rm LEFT JOIN ("
+                    "  SELECT camera_id, DATE(ts) AS day, AVG(occupied_count) AS avg_occupied "
+                    "  FROM records "
+                    "  WHERE WEEKDAY(ts)=%s AND HOUR(ts)=%s "
+                    "    AND ts >= DATE_SUB(CURDATE(), INTERVAL 84 DAY) "
+                    "  GROUP BY camera_id, DATE(ts)"
+                    ") d ON d.camera_id=rm.camera_id "
+                    "GROUP BY rm.camera_id, rm.name, rm.total_seats",
+                    (target.weekday(), target.hour))
+                primary = {r["camera_id"]: r for r in cur.fetchall() if int(r["samples"] or 0)}
+
+                # 第二层：数据刚积累时放宽到任意日期的同小时，仍保持日均值而非伪造数据。
+                cur.execute(
+                    "SELECT rm.camera_id, rm.name, rm.total_seats, "
+                    "       AVG(d.avg_occupied) AS predicted_occupied, COUNT(d.day) AS samples "
+                    "FROM rooms rm LEFT JOIN ("
+                    "  SELECT camera_id, DATE(ts) AS day, AVG(occupied_count) AS avg_occupied "
+                    "  FROM records "
+                    "  WHERE HOUR(ts)=%s AND ts >= DATE_SUB(CURDATE(), INTERVAL 84 DAY) "
+                    "  GROUP BY camera_id, DATE(ts)"
+                    ") d ON d.camera_id=rm.camera_id "
+                    "GROUP BY rm.camera_id, rm.name, rm.total_seats",
+                    (target.hour,))
+                fallback = {r["camera_id"]: r for r in cur.fetchall() if int(r["samples"] or 0)}
+                rooms = []
+                for camera_id in set(primary) | set(fallback):
+                    row = primary.get(camera_id) or fallback[camera_id]
+                    samples = int(row["samples"] or 0)
+                    occupied = max(0, min(int(row["total_seats"]),
+                                          round(float(row["predicted_occupied"] or 0))))
+                    rooms.append({
+                        "camera_id": row["camera_id"], "name": row["name"],
+                        "total_seats": int(row["total_seats"]),
+                        "predicted_occupied": occupied,
+                        "predicted_free": int(row["total_seats"]) - occupied,
+                        "samples": samples,
+                        "basis": "同星期同小时" if camera_id in primary else "同小时（日期已放宽）",
+                        "confidence": "high" if samples >= 4 else "medium" if samples >= 2 else "low",
+                    })
+                rooms.sort(key=lambda r: (-r["predicted_free"], r["name"]))
+                slots.append({"ts": target.strftime("%Y-%m-%d %H:00"), "rooms": rooms})
+        return {"method": "优先过去12周同星期同小时；样本不足时回退至同小时历史日均值", "slots": slots}
+    finally:
+        db.close()
+
+
 @app.post("/api/auth/register", response_model=UserOut)
 def register(data: RegisterIn):
     """自助注册（一律普通用户, 管理员由后台创建）"""
@@ -1378,6 +1444,17 @@ def portal_trends(request: Request):
         return RedirectResponse("/portal/overview?denied=trends", status_code=302)
     return templates.TemplateResponse(request, "portal/trends.html",
                                       {"user": u, "active": "trends"})
+
+
+@app.get("/portal/forecast")
+def portal_forecast(request: Request):
+    r, u = _require_page(request)
+    if r:
+        return r
+    if u.get("role") == "admin":
+        return RedirectResponse("/portal/overview?denied=forecast", status_code=302)
+    return templates.TemplateResponse(request, "portal/forecast.html",
+                                      {"user": u, "active": "forecast"})
 
 
 @app.get("/portal/ai")

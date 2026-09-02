@@ -1,0 +1,33 @@
+{% extends "portal/base.html" %}
+{% block title %}空位预测 · StudySense{% endblock %}
+{% block main %}
+<div class="panel">
+  <div class="trend-toolbar">
+    <h2 style="color:#fff;font-size:17px;flex:1">🔮 未来空位预测</h2>
+    <button class="btn ghost sm" id="refreshForecast">刷新预测</button>
+  </div>
+  <p class="forecast-note" id="forecastNote">基于过去 12 周同星期、同时段的日均人数估算；不涉及座位位置识别。</p>
+  <div class="forecast-grid" id="forecastGrid"><div class="empty">正在计算预测…</div></div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+async function loadForecast() {
+  const grid = $("#forecastGrid");
+  grid.innerHTML = `<div class="empty">正在计算预测…</div>`;
+  try {
+    const d = await api("/api/forecast?hours=3");
+    $("#forecastNote").textContent = `预测方法：${d.method}。预测人数后以教室总座位数相减，不需要标注座位位置。`;
+    const cards = d.slots.map(slot => {
+      const rooms = slot.rooms.slice(0, 3).map((r, i) =>
+        `<div class="forecast-room"><span>${i === 0 ? "⭐ " : ""}${r.name}</span><span class="forecast-free">预计 ${r.predicted_free} 空位</span></div>`
+      ).join("");
+      return `<div class="panel forecast-card"><div class="forecast-time">${slot.ts}</div>${rooms || `<div class="empty">暂无预测数据</div>`}</div>`;
+    });
+    grid.innerHTML = cards.join("");
+  } catch (ex) { grid.innerHTML = `<div class="empty">预测加载失败: ${ex.message}</div>`; }
+}
+$("#refreshForecast").addEventListener("click", loadForecast);
+loadForecast();
+</script>
+{% endblock %}
