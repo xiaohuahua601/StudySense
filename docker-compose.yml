@@ -34,9 +34,12 @@ services:
     ports:
       - "8080:80"
     environment:
-      # 大屏页面访问后端 API 的地址: 本机测试用 localhost;
-      # 部署到班级大屏时在 .env 改为服务器实际地址, 如 http://192.168.1.50:8000
-      API_BASE: ${DASHBOARD_API_BASE:-http://localhost:8000}
+      # API_BASE 留空 = 同源模式: nginx 将 /api/ 反向代理到 api 容器,
+      # 换任何 IP/域名访问大屏都自动生效, 无需改配置
+      # (保留兼容: 设为外部地址则恢复旧的直连跨域模式)
+      API_BASE: ${DASHBOARD_API_BASE:-}
+    depends_on:
+      - api
     restart: unless-stopped
 
   # ---------- MySQL 数据库 ----------
