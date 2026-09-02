@@ -1,0 +1,119 @@
+{% extends "portal/base.html" %}
+{% block title %}个人中心 · StudySense{% endblock %}
+{% block main %}
+<div class="panel">
+  <div class="tbl-title"><h2>👤 个人中心</h2></div>
+
+  <div class="profile-grid">
+    <!-- 左: 头像卡 -->
+    <div class="profile-card">
+      <img id="pAvatar" src="/ui/logo.svg" alt="头像">
+      <div class="p-name" id="pName">{{ user.username }}</div>
+      <div class="p-sub">{{ "管理员" if user.role == "admin" else "普通用户" }}</div>
+      <div class="p-account">🔒 登录账号：<b>{{ user.username }}</b><br><span>注册时设置一次，不可修改</span></div>
+      <button class="btn ghost sm" id="btnAvatar">更换头像</button>
+      <input type="file" id="avatarFile" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+      <div class="p-hint">支持 PNG/JPG/WebP/GIF，≤ 2MB</div>
+      <div class="form-err" id="avErr"></div>
+    </div>
+
+    <!-- 右: 昵称 + 改密 -->
+    <div class="profile-forms">
+      <div class="p-sec">
+        <h3>修改昵称</h3>
+        <label>昵称（1-32 字，展示名，区别于登录账号，可随时修改）</label>
+        <input id="nickInput" placeholder="请输入新昵称" maxlength="32">
+        <div class="form-err" id="nickErr"></div>
+        <button class="btn primary sm" id="btnNick">保存昵称</button>
+      </div>
+
+      <div class="p-sec">
+        <h3>修改密码</h3>
+        <label>原密码</label>
+        <input id="oldPwd" type="password" placeholder="当前密码">
+        <label>新密码（至少 6 位）</label>
+        <input id="newPwd" type="password" placeholder="新密码">
+        <label>确认新密码</label>
+        <input id="newPwd2" type="password" placeholder="再次输入新密码">
+        <div class="form-err" id="pwdErr"></div>
+        <button class="btn primary sm" id="btnPwd">修改密码</button>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ================= 个人中心 ================= */
+async function loadProfile() {
+  try {
+    const me = await api("/api/auth/me");
+    $("#pName").textContent = me.nickname || me.username;
+    if (me.avatar) $("#pAvatar").src = me.avatar + "?v=" + Date.now();
+    $("#nickInput").value = me.nickname || "";
+  } catch { /* 401 已由 api() 跳转登录 */ }
+}
+loadProfile();
+
+/* ---- 头像上传（FormData: 不设 Content-Type, 由浏览器带 boundary） ---- */
+$("#btnAvatar").addEventListener("click", () => $("#avatarFile").click());
+$("#avatarFile").addEventListener("change", async e => {
+  const f = e.target.files[0];
+  e.target.value = "";                       // 允许连续选同一文件
+  if (!f) return;
+  if (f.size > 2 * 1024 * 1024) { $("#avErr").textContent = "图片不能超过 2MB"; return; }
+  const fd = new FormData();
+  fd.append("file", f);
+  $("#avErr").textContent = "";
+  try {
+    const r = await fetch("/api/profile/avatar", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },   // CSRF 校验头
+      body: fd,
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.detail || "上传失败");
+    $("#pAvatar").src = d.avatar + "?v=" + Date.now();      // 立即刷新预览(防缓存)
+    if ($("#chipAvatar")) $("#chipAvatar").src = d.avatar + "?v=" + Date.now();
+    $("#avErr").style.color = "#69f0ae";
+    $("#avErr").textContent = "头像已更新";
+    setTimeout(() => { $("#avErr").textContent = ""; $("#avErr").style.color = ""; }, 2500);
+  } catch (ex) {
+    $("#avErr").style.color = "";
+    $("#avErr").textContent = ex.message;
+  }
+});
+
+/* ---- 昵称 ---- */
+$("#btnNick").addEventListener("click", async () => {
+  const nick = $("#nickInput").value.trim();
+  if (!nick) { $("#nickErr").textContent = "昵称不能为空"; return; }
+  try {
+    await api("/api/profile/nickname", { method: "POST", body: JSON.stringify({ nickname: nick }) });
+    $("#pName").textContent = nick;
+    if ($("#chipName")) $("#chipName").innerHTML = "<b>" + nick + "</b>";
+    $("#nickErr").style.color = "#69f0ae";
+    $("#nickErr").textContent = "昵称已更新";
+    setTimeout(() => { $("#nickErr").textContent = ""; $("#nickErr").style.color = ""; }, 2500);
+  } catch (ex) { $("#nickErr").textContent = ex.message; }
+});
+
+/* ---- 修改密码 ---- */
+$("#btnPwd").addEventListener("click", async () => {
+  const oldP = $("#oldPwd").value, n1 = $("#newPwd").value, n2 = $("#newPwd2").value;
+  if (!oldP || !n1) { $("#pwdErr").textContent = "请填写完整"; return; }
+  if (n1.length < 6) { $("#pwdErr").textContent = "新密码至少 6 位"; return; }
+  if (n1 !== n2) { $("#pwdErr").textContent = "两次输入的新密码不一致"; return; }
+  try {
+    await api("/api/profile/password",
+      { method: "POST", body: JSON.stringify({ old_password: oldP, new_password: n1 }) });
+    $("#oldPwd").value = $("#newPwd").value = $("#newPwd2").value = "";
+    $("#pwdErr").style.color = "#69f0ae";
+    $("#pwdErr").textContent = "密码修改成功，下次登录请使用新密码";
+    setTimeout(() => { $("#pwdErr").textContent = ""; $("#pwdErr").style.color = ""; }, 3500);
+  } catch (ex) { $("#pwdErr").textContent = ex.message; }
+});
+</script>
+{% endblock %}

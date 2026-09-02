@@ -4,7 +4,7 @@ WORKDIR /app
 
 # 先装依赖（利用构建缓存层）
 RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple \
-    fastapi uvicorn pymysql requests jinja2
+    fastapi uvicorn pymysql requests jinja2 python-multipart
 
 # 拷贝代码
 COPY server.py .

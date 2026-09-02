@@ -117,6 +117,17 @@ if (_btnLogout) _btnLogout.addEventListener("click", async () => {
   location.href = "/portal/login";
 });
 
+/* ================= 顶栏头像/昵称同步（登录态页面拉取个人资料） ================= */
+(async () => {
+  const img = document.getElementById("chipAvatar"), name = document.getElementById("chipName");
+  if (!img || !name) return;   // 登录页等无顶栏页面跳过
+  try {
+    const me = await api("/api/auth/me");
+    if (me.avatar) img.src = me.avatar;
+    name.innerHTML = "<b>" + (me.nickname || me.username) + "</b>";
+  } catch { /* 静默降级: 保持 SSR 渲染的用户名 */ }
+})();
+
 /* ================= 弹窗控制 ================= */
 function openModal(html) {
   $("#modalBody").innerHTML = html;

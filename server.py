@@ -27,7 +27,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import pymysql
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, File, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -195,6 +195,8 @@ CREATE TABLE IF NOT EXISTS users (
     password_salt CHAR(32) NOT NULL,
     password_hash CHAR(64) NOT NULL,
     role VARCHAR(16) NOT NULL DEFAULT 'user' COMMENT 'admin/user',
+    nickname VARCHAR(64) NOT NULL DEFAULT '' COMMENT '昵称',
+    avatar VARCHAR(255) NOT NULL DEFAULT '' COMMENT '头像URL路径(/portal-static/avatars/xxx)',
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
     last_login DATETIME DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -227,6 +229,16 @@ def init_db():
             cur.execute(CREATE_SESSIONS_SQL)
             cur.execute(CREATE_ALERTS_SQL)
             cur.execute(CREATE_USERS_SQL)
+            # 旧 users 表补充 nickname/avatar 列（幂等迁移）
+            cur.execute("SELECT column_name AS c FROM information_schema.columns "
+                        "WHERE table_schema='study_room' AND table_name='users'")
+            ucols = {r["c"] for r in cur.fetchall()}
+            if "nickname" not in ucols:
+                cur.execute("ALTER TABLE users ADD COLUMN nickname "
+                            "VARCHAR(64) NOT NULL DEFAULT '' COMMENT '昵称'")
+            if "avatar" not in ucols:
+                cur.execute("ALTER TABLE users ADD COLUMN avatar "
+                            "VARCHAR(255) NOT NULL DEFAULT '' COMMENT '头像URL路径'")
             # 种子管理员: 首次启动写入 admin/admin123（之后可改密码）
             cur.execute("SELECT COUNT(*) AS n FROM users")
             if cur.fetchone()["n"] == 0:
@@ -1022,7 +1034,8 @@ def ask(data: AskIn):
 class RegisterIn(BaseModel):
     username: str = Field(..., min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_\u4e00-\u9fa5]+$")
     password: str = Field(..., min_length=6, max_length=64)
-    nickname: Optional[str] = None   # 预留
+    # 昵称与用户名分离: 用户名是登录账号(注册后不可改), 昵称是展示名(个人中心随时可改)
+    nickname: Optional[str] = Field(None, max_length=32)
 
 
 class LoginIn(BaseModel):
@@ -1034,6 +1047,8 @@ class UserOut(BaseModel):
     id: int
     username: str
     role: str
+    nickname: Optional[str] = None
+    avatar: Optional[str] = None
     created_at: Optional[datetime] = None
     last_login: Optional[datetime] = None
 
@@ -1041,6 +1056,7 @@ class UserOut(BaseModel):
 class UserCreateIn(BaseModel):
     username: str = Field(..., min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_\u4e00-\u9fa5]+$")
     password: str = Field(..., min_length=6, max_length=64)
+    nickname: Optional[str] = Field(None, max_length=32)   # 可选展示名, 之后可在个人中心修改
     role: str = Field("user", pattern=r"^(admin|user)$")
 
 
@@ -1091,10 +1107,11 @@ def register(data: RegisterIn):
             if cur.fetchone():
                 raise HTTPException(400, "用户名已存在")
             salt, ph = _hash_pwd(data.password)
-            cur.execute("INSERT INTO users (username, password_salt, password_hash, role) "
-                        "VALUES (%s, %s, %s, 'user')", (data.username, salt, ph))
+            cur.execute("INSERT INTO users (username, nickname, password_salt, password_hash, role) "
+                        "VALUES (%s, %s, %s, %s, 'user')",
+                        (data.username, (data.nickname or "").strip(), salt, ph))
             uid = cur.lastrowid
-            cur.execute("SELECT id, username, role, created_at, last_login FROM users WHERE id=%s", (uid,))
+            cur.execute("SELECT id, username, nickname, role, created_at, last_login FROM users WHERE id=%s", (uid,))
             row = cur.fetchone()
         db.commit()
         return UserOut(**row)
@@ -1141,8 +1158,8 @@ def me(user: dict = Depends(current_user)):
     db = get_db()
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT id, username, role, created_at, last_login FROM users WHERE id=%s",
-                        (user["uid"],))
+            cur.execute("SELECT id, username, role, nickname, avatar, created_at, last_login "
+                        "FROM users WHERE id=%s", (user["uid"],))
             row = cur.fetchone()
         if not row:
             raise HTTPException(401, "用户不存在")
@@ -1151,12 +1168,95 @@ def me(user: dict = Depends(current_user)):
         db.close()
 
 
+# ---------- 个人中心：昵称 / 头像 / 改密 ----------
+
+AVATAR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web", "portal_static", "avatars")
+AVATAR_MAX = 2 * 1024 * 1024   # 2MB
+# content-type → 扩展名（同时用于魔数校验后的落盘命名）
+AVATAR_TYPES = {"image/png": ".png", "image/jpeg": ".jpg",
+                "image/webp": ".webp", "image/gif": ".gif"}
+# 魔数（文件头）: 防止改后缀伪装成图片的可执行文件等
+AVATAR_MAGIC = {".png": b"\x89PNG", ".jpg": b"\xff\xd8\xff",
+                ".webp": b"RIFF", ".gif": b"GIF8"}
+
+
+class NicknameIn(BaseModel):
+    nickname: str = Field(..., min_length=1, max_length=32)
+
+
+class PasswordChangeIn(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=6, max_length=64)
+
+
+@app.post("/api/profile/nickname")
+def profile_nickname(data: NicknameIn, user: dict = Depends(current_user)):
+    nickname = data.nickname.strip()
+    if not nickname:
+        raise HTTPException(400, "昵称不能为空")
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("UPDATE users SET nickname=%s WHERE id=%s",
+                        (nickname, user["uid"]))
+        db.commit()
+        return {"ok": True, "nickname": nickname}
+    finally:
+        db.close()
+
+
+@app.post("/api/profile/password")
+def profile_password(data: PasswordChangeIn, user: dict = Depends(current_user)):
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("SELECT password_salt, password_hash FROM users WHERE id=%s",
+                        (user["uid"],))
+            row = cur.fetchone()
+        if not row or not _verify_pwd(data.old_password,
+                                      row["password_salt"], row["password_hash"]):
+            raise HTTPException(400, "原密码错误")
+        salt, ph = _hash_pwd(data.new_password)
+        with db.cursor() as cur:
+            cur.execute("UPDATE users SET password_salt=%s, password_hash=%s WHERE id=%s",
+                        (salt, ph, user["uid"]))
+        db.commit()
+        return {"ok": True}
+    finally:
+        db.close()
+
+
+@app.post("/api/profile/avatar")
+def profile_avatar(file: UploadFile = File(...), user: dict = Depends(current_user)):
+    ext = AVATAR_TYPES.get((file.content_type or "").lower())
+    if not ext:
+        raise HTTPException(400, "仅支持 PNG / JPG / WebP / GIF 图片")
+    data = file.file.read(AVATAR_MAX + 1)
+    if len(data) > AVATAR_MAX:
+        raise HTTPException(400, "图片不能超过 2MB")
+    if not data.startswith(AVATAR_MAGIC[ext]):
+        raise HTTPException(400, "文件内容与图片格式不符")
+    os.makedirs(AVATAR_DIR, exist_ok=True)
+    filename = f"{user['uid']}{ext}"           # 每人一个文件, 重复上传覆盖
+    with open(os.path.join(AVATAR_DIR, filename), "wb") as f:
+        f.write(data)
+    path = f"/portal-static/avatars/{filename}"
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute("UPDATE users SET avatar=%s WHERE id=%s", (path, user["uid"]))
+        db.commit()
+    finally:
+        db.close()
+    return {"ok": True, "avatar": path}
+
+
 @app.get("/api/admin/users", response_model=list[UserOut])
 def admin_list_users(_: dict = Depends(require_admin)):
     db = get_db()
     try:
         with db.cursor() as cur:
-            cur.execute("SELECT id, username, role, created_at, last_login FROM users ORDER BY id")
+            cur.execute("SELECT id, username, nickname, role, created_at, last_login FROM users ORDER BY id")
             return [UserOut(**r) for r in cur.fetchall()]
     finally:
         db.close()
@@ -1171,10 +1271,11 @@ def admin_create_user(data: UserCreateIn, _: dict = Depends(require_admin)):
             if cur.fetchone():
                 raise HTTPException(400, "用户名已存在")
             salt, ph = _hash_pwd(data.password)
-            cur.execute("INSERT INTO users (username, password_salt, password_hash, role) "
-                        "VALUES (%s, %s, %s, %s)", (data.username, salt, ph, data.role))
+            cur.execute("INSERT INTO users (username, nickname, password_salt, password_hash, role) "
+                        "VALUES (%s, %s, %s, %s, %s)",
+                        (data.username, (data.nickname or "").strip(), salt, ph, data.role))
             uid = cur.lastrowid
-            cur.execute("SELECT id, username, role, created_at, last_login FROM users WHERE id=%s", (uid,))
+            cur.execute("SELECT id, username, nickname, role, created_at, last_login FROM users WHERE id=%s", (uid,))
             row = cur.fetchone()
         db.commit()
         return UserOut(**row)
@@ -1199,7 +1300,7 @@ def admin_update_user(uid: int, data: UserUpdateIn, admin: dict = Depends(requir
                 salt, ph = _hash_pwd(data.password)
                 cur.execute("UPDATE users SET password_salt=%s, password_hash=%s WHERE id=%s",
                             (salt, ph, uid))
-            cur.execute("SELECT id, username, role, created_at, last_login FROM users WHERE id=%s", (uid,))
+            cur.execute("SELECT id, username, nickname, role, created_at, last_login FROM users WHERE id=%s", (uid,))
             new = cur.fetchone()
         db.commit()
         return UserOut(**new)
@@ -1304,6 +1405,15 @@ def portal_users(request: Request):
         return r
     return templates.TemplateResponse(request, "portal/users.html",
                                       {"user": u, "active": "users"})
+
+
+@app.get("/portal/profile")
+def portal_profile(request: Request):
+    r, u = _require_page(request)
+    if r:
+        return r
+    return templates.TemplateResponse(request, "portal/profile.html",
+                                      {"user": u, "active": "profile"})
 
 
 @app.post("/portal/logout")

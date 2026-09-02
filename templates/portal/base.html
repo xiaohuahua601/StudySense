@@ -16,7 +16,8 @@
     <div class="logo"><img src="/ui/logo.svg" alt="StudySense" style="height:26px;vertical-align:-7px;margin-right:8px">StudySense 管理门户</div>
     <div class="spacer"></div>
     <div class="userchip">
-      <span>👤 <b>{{ user.username }}</b></span>
+      <img id="chipAvatar" class="chip-avatar" src="/ui/logo.svg" alt="头像">
+      <span id="chipName"><b>{{ user.username }}</b></span>
       <span class="role-badge {{ user.role }}">{{ "管理员" if user.role == "admin" else "普通用户" }}</span>
     </div>
     <button class="btn ghost sm" id="btnLogout">退出登录</button>
@@ -33,6 +34,7 @@
     <a class="ntab{% if active == 'rooms' %} on{% endif %}" href="/portal/rooms">🏫 教室管理</a>
     <a class="ntab{% if active == 'users' %} on{% endif %}" href="/portal/users">👥 用户管理</a>
     {% endif %}
+    <a class="ntab{% if active == 'profile' %} on{% endif %}" href="/portal/profile">👤 个人中心</a>
   </nav>
   <div class="main-col">
     <section class="view">{% block main %}{% endblock %}</section>
