@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import os
+import re
 import secrets
 import time
 from datetime import datetime, timedelta
@@ -154,6 +155,14 @@ CREATE TABLE IF NOT EXISTS records (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 """
 
+# 每个教室最新一条记录的视图: 供 LLM 直接查"当前人数/当前空座", 免写复杂子查询
+CREATE_LATEST_VIEW_SQL = """
+CREATE OR REPLACE VIEW latest_records AS
+SELECT camera_id, head_count, occupied_count, ts
+FROM records rec
+WHERE ts = (SELECT MAX(ts) FROM records r2 WHERE r2.camera_id = rec.camera_id)
+"""
+
 CREATE_SESSIONS_SQL = """
 CREATE TABLE IF NOT EXISTS seat_sessions (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -214,6 +223,7 @@ def init_db():
                 cur.execute("ALTER TABLE rooms ADD COLUMN location "
                             "VARCHAR(128) NOT NULL DEFAULT ''")
             cur.execute(CREATE_RECORDS_SQL)
+            cur.execute(CREATE_LATEST_VIEW_SQL)
             cur.execute(CREATE_SESSIONS_SQL)
             cur.execute(CREATE_ALERTS_SQL)
             cur.execute(CREATE_USERS_SQL)
@@ -698,21 +708,23 @@ _SCHEMA_DESC = """数据库 study_room, 表:
    - name VARCHAR 教室中文名称(如 三教201)
    - total_seats INT 座位总数
    注意: 用户提到英文标识(如 testroom)时用 camera_id 匹配, 提到中文名称时用 name 匹配; 优先 camera_id。
-2. records: 边缘端周期上报的实时监测记录（所有人数/占用数据只在这里!）
-   - ts DATETIME 时间
+2. latest_records(视图): 每个教室"最新一条"监测记录——查"当前人数/当前空座"必须用它, 已自动取好, 无需任何子查询!
    - camera_id VARCHAR 教室标识
-   - head_count INT 检测人数
-   - occupied_count INT 占用座位数(已封顶不超过该教室 total_seats)
-   注意: 查询"当前/现在/是否有空座"等实时状态时, 每个教室必须取其最新一条记录
-   (如 WHERE ts=(SELECT MAX(ts) FROM records r2 WHERE r2.camera_id=records.camera_id)),
-   空座数 = rooms.total_seats - occupied_count, 不要用全天平均值。
-3. seat_sessions: 人的在场会话(一个人从出现到离开)
+   - head_count INT 当前检测人数
+   - occupied_count INT 当前占用座位数
+   - ts DATETIME 最新上报时间
+   当前空座数 = rooms.total_seats - latest_records.occupied_count。
+3. records: 边缘端周期上报的历史监测明细（查历史/趋势/平均值时才用它）
+   - ts DATETIME 时间, camera_id, head_count INT, occupied_count INT
+   注意: 不要用 records 查"当前/现在"状态(要过滤最新记录很复杂, 容易写错);
+   也禁止 GROUP BY + MAX(occupied_count) 之类写法——那是历史峰值不是当前值。
+4. seat_sessions: 人的在场会话(一个人从出现到离开)
    - camera_id VARCHAR 教室标识
    - track_id INT 跟踪ID(每次在场一个ID)
    - start_time DATETIME 进入时间
    - end_time DATETIME 离开时间
    - duration_sec INT 在场秒数
-4. camera_alerts: 摄像头异常告警
+5. camera_alerts: 摄像头异常告警
    - ts DATETIME, camera_id, alert_type(blocked遮挡/moved移动/recovered恢复), message
 
 历史规律问题提示: "过去一周哪天/哪个时段人最多(最少)" 可用 SQL 查询, 如:
@@ -724,25 +736,36 @@ FROM records WHERE ts >= NOW() - INTERVAL 7 DAY
 GROUP BY HOUR(ts) ORDER BY avg_heads ASC LIMIT 3;
 注意: 只能用 HOUR(ts)/DAYOFWEEK(ts) 等函数提取时间, 不存在名为 DATE 的列。
 
-参考示例（各教室当前空座数, 按空座降序）:
-SELECT r.camera_id, r.name, r.total_seats - t.occupied_count AS free_seats
-FROM rooms r JOIN (
-    SELECT camera_id, occupied_count FROM records rec
-    WHERE ts = (SELECT MAX(ts) FROM records r2 WHERE r2.camera_id = rec.camera_id)
-) t ON t.camera_id = r.camera_id
+参考示例（各教室当前人数, 按人数降序, 适用于"哪个教室人最多/最挤/最热门"）:
+SELECT r.camera_id, r.name, r.location, t.occupied_count
+FROM rooms r JOIN latest_records t ON t.camera_id = r.camera_id
+ORDER BY t.occupied_count DESC;
+参考示例（各教室当前空座数, 按空座降序, 适用于"哪个教室最空/空座最多"）:
+SELECT r.camera_id, r.name, r.location, r.total_seats - t.occupied_count AS free_seats
+FROM rooms r JOIN latest_records t ON t.camera_id = r.camera_id
 ORDER BY free_seats DESC;
+参考示例（某个教室当前人数, 适用于"X教室现在有几人/多少人"）:
+SELECT r.camera_id, r.name, r.location, t.head_count, t.occupied_count
+FROM rooms r JOIN latest_records t ON t.camera_id = r.camera_id
+WHERE r.name LIKE '%教室中文名%';   -- 问"几人"时回答 head_count
+注意区分方向: "人最多/最挤" = 按 occupied_count(或 head_count) 降序;
+"最空/空位最多/最空闲" = 按 free_seats(空座数) 降序——两者相反, 不要混淆!
+"最空"和"空位最多"是同一个意思, 都按空座数降序。
 
 重要: rooms 表没有 occupied_count/head_count 列, 写 r.occupied_count 或 r.head_count 会直接报错
-(Unknown column)! 人数/占用类数据必须 JOIN records 表获得。
+(Unknown column)! 人数/占用类数据必须 JOIN latest_records(当前) 或 records(历史) 获得。
+MySQL 开启了 only_full_group_by 严格模式: SELECT 中的非聚合列必须全部出现在 GROUP BY 子句中,
+否则报 1055 错误; 拿不准就不用 GROUP BY, 直接 JOIN 后 ORDER BY 排序即可。
 涉及教室的查询, SELECT 中必须包含 r.name(教室中文名称)和 r.location(地址)列, 便于面向用户展示。
 问"明天/将来"的问题时没有未来数据, 一律用历史数据按星期×小时聚合平均来推测。"""
 
 
 def _ollama_chat(prompt: str, system: str = "", timeout: int = 120) -> str:
-    """调用 Ollama chat 接口"""
+    """调用 Ollama chat 接口（低温采样: SQL生成/数值读数需要确定性, 高温易幻觉）"""
     import urllib.request
     payload = {"model": OLLAMA_MODEL, "prompt": prompt,
-               "system": system, "stream": False}
+               "system": system, "stream": False,
+               "options": {"temperature": 0.1}}
     req = urllib.request.Request(
         f"{OLLAMA_URL}/api/generate",
         data=json.dumps(payload).encode("utf-8"),
@@ -777,15 +800,156 @@ class AskIn(BaseModel):
     camera_id: Optional[str] = None   # 限定教室(可选)
 
 
+# ---------- AI 问答·意图路由 ----------
+# 高频问题走"固定 SQL 模板 + Python 确定性渲染答案", 完全不经 LLM —— 无论什么模型、
+# 什么采样温度, 答案都由数据唯一确定, 从架构上杜绝"数对了但说错了"的幻觉。
+# LLM Text2SQL 仅作为长尾问题的兜底。
+
+def _room_label(row: dict) -> str:
+    """教室名(地址); 无地址只写教室名"""
+    loc = row.get("location")
+    return f"{row['name']}({loc})" if loc else row["name"]
+
+
+def _match_room_name(db, question: str) -> Optional[str]:
+    """问题中是否出现某个已注册教室名(含别名), 返回该教室名"""
+    with db.cursor() as cur:
+        cur.execute("SELECT name FROM rooms")
+        names = [r["name"] for r in cur.fetchall()]
+    for name in names:
+        if name and name in question:
+            return name
+    return None
+
+
+def _route_intent(db, question: str, camera_id: Optional[str]) -> Optional[tuple]:
+    """识别高频问题意图。命中返回 (kind, sql), 未命中返回 None(走 LLM)"""
+    q = question.strip()
+    if camera_id and not re.fullmatch(r"[\w\-]+", camera_id):
+        camera_id = None   # 白名单校验, 防 SQL 注入
+    scope = f"WHERE r.camera_id = '{camera_id}'" if camera_id else ""
+    base = ("FROM rooms r JOIN latest_records t ON t.camera_id = r.camera_id "
+            f"{scope}")
+
+    # ① 时段推荐: "明天/今天什么时间去最空/最容易找到空座"
+    if re.search(r"(什么时间|什么时候|几点|哪个时段|啥时候)", q) and \
+       re.search(r"(空|座)", q):
+        sql = ("SELECT HOUR(ts) AS hour, ROUND(AVG(head_count),1) AS avg_heads "
+               "FROM records WHERE ts >= NOW() - INTERVAL 7 DAY "
+               "GROUP BY HOUR(ts) ORDER BY avg_heads ASC LIMIT 3")
+        return "best_time", sql
+
+    room = _match_room_name(db, q)
+
+    # ② 指定教室当前人数: "X教室现在有几人/多少人"
+    if room and re.search(r"(几人|多少人|人数|有没有人|有人吗)", q):
+        safe_room = room.replace("'", "''")
+        sql = (f"SELECT r.name, r.location, t.head_count, t.occupied_count, "
+               f"r.total_seats - t.occupied_count AS free_seats "
+               f"FROM rooms r JOIN latest_records t ON t.camera_id = r.camera_id "
+               f"WHERE r.name = '{safe_room}'")
+        return "room_count", sql
+
+    # ③ 指定教室当前空位: "X教室有多少空位/空座"
+    if room and re.search(r"(空位|空座|空着|还有座)", q):
+        safe_room = room.replace("'", "''")
+        sql = (f"SELECT r.name, r.location, t.head_count, t.occupied_count, "
+               f"r.total_seats - t.occupied_count AS free_seats "
+               f"FROM rooms r JOIN latest_records t ON t.camera_id = r.camera_id "
+               f"WHERE r.name = '{safe_room}'")
+        return "room_free", sql
+
+    # ④ 全局人最多/最少
+    if re.search(r"(人最多|最多人|最挤|最热门)", q):
+        sql = (f"SELECT r.name, r.location, t.occupied_count, t.head_count, "
+               f"r.total_seats - t.occupied_count AS free_seats {base} "
+               f"ORDER BY t.occupied_count DESC LIMIT 5")
+        return "most_people", sql
+    if re.search(r"(人最少|最少人|人少)", q):
+        sql = (f"SELECT r.name, r.location, t.occupied_count, t.head_count, "
+               f"r.total_seats - t.occupied_count AS free_seats {base} "
+               f"ORDER BY t.occupied_count ASC LIMIT 5")
+        return "least_people", sql
+
+    # ⑤ 全局最空/空位最多、空位最少
+    if re.search(r"(最空|最空闲|空位最多|空座最多|最多空位|最多空座)", q):
+        sql = (f"SELECT r.name, r.location, t.occupied_count, t.head_count, "
+               f"r.total_seats - t.occupied_count AS free_seats {base} "
+               f"ORDER BY free_seats DESC LIMIT 5")
+        return "most_free", sql
+    if re.search(r"(空位最少|空座最少|最少空位|最难找座)", q):
+        sql = (f"SELECT r.name, r.location, t.occupied_count, t.head_count, "
+               f"r.total_seats - t.occupied_count AS free_seats {base} "
+               f"ORDER BY free_seats ASC LIMIT 5")
+        return "least_free", sql
+
+    return None
+
+
+def _render_intent_answer(kind: str, rows: list, question: str) -> str:
+    """把路由 SQL 的查询结果渲染成确定性中文答案(不经 LLM)"""
+    if not rows:
+        return "暂无数据，请稍后再试。"
+
+    if kind == "best_time":
+        slots = "、".join(
+            f"{int(r['hour'])}:00-{int(r['hour']) + 1}:00（历史平均 {r['avg_heads']} 人）"
+            for r in rows)
+        return f"根据近一周历史数据，容易找到空座的时间段是：{slots}。建议避开高峰、错峰前往。"
+
+    r = rows[0]
+    label = _room_label(r)
+    if kind == "most_people":
+        return f"当前在座人数最多的是 {label}：在座 {r['occupied_count']} 人，剩余空位 {r['free_seats']} 个。"
+    if kind == "least_people":
+        return f"当前在座人数最少的是 {label}：在座 {r['occupied_count']} 人，剩余空位 {r['free_seats']} 个。"
+    if kind == "most_free":
+        return f"当前最空的是 {label}：剩余空位 {r['free_seats']} 个，在座 {r['occupied_count']} 人。"
+    if kind == "least_free":
+        return f"当前最难找到空位的是 {label}：仅剩 {r['free_seats']} 个空位，在座 {r['occupied_count']} 人。"
+    if kind == "room_count":
+        n = r["head_count"]
+        if n == 0:
+            return f"{label} 当前没有人在座，空位 {r['free_seats']} 个。"
+        return f"{label} 当前在座约 {n} 人，空位 {r['free_seats']} 个。"
+    if kind == "room_free":
+        return f"{label} 当前空位 {r['free_seats']} 个，在座 {r['occupied_count']} 人。"
+    return "暂不支持的问题，请换个问法。"
+
+
 @app.post("/api/ask")
 def ask(data: AskIn):
-    """自然语言问答: 问题 -> LLM生成SQL -> 查库 -> LLM组织答案
+    """自然语言问答: 高频问题走意图路由(固定SQL+确定性答案),
+    长尾问题走 LLM Text2SQL(问题 -> LLM生成SQL -> 查库 -> LLM组织答案)。
 
     结构化时序数据用 Text2SQL 比向量检索更准。
     """
     today = datetime.now().strftime("%Y-%m-%d")
     scope = f"当前限定教室 camera_id='{data.camera_id}'。" if data.camera_id \
         else "可查询全部教室, 回答时注明教室。"
+
+    # ---- 0) 意图路由: 高频问题直接走固定 SQL, 确定性答案, 不经 LLM ----
+    routed = None
+    db = get_db()
+    try:
+        routed = _route_intent(db, data.question, data.camera_id)
+    except Exception:
+        routed = None   # 路由失败(如表不存在)则降级走 LLM
+    if routed:
+        kind, sql = routed
+        try:
+            with db.cursor() as cur:
+                cur.execute(f"SELECT * FROM ({sql}) AS q LIMIT 50")
+                rows = cur.fetchall()
+            return {"question": data.question, "sql": sql, "rows": rows,
+                    "route": "rule",
+                    "answer": _render_intent_answer(kind, rows, data.question)}
+        except pymysql.MySQLError:
+            pass   # 固定 SQL 也失败(极端情况)则降级走 LLM
+        finally:
+            db.close()
+    else:
+        db.close()
 
     # ---- 1) LLM 生成 SQL ----
     sql_system = ("你是 MySQL 专家。只输出一条可直接执行的 SELECT 语句, "
@@ -833,11 +997,14 @@ def ask(data: AskIn):
     # ---- 3) LLM 组织自然语言答案 ----
     rows_text = json.dumps(rows, ensure_ascii=False, default=str)
     ans_system = ("你是自习室管理助手, 用简洁中文回答, 基于数据不要编造。"
+                  "『最空』『最空闲』指空闲座位最多, 不是座位最少。"
+                  "回答『最多/最少/最高/最低』类问题时, 必须逐一核对查询结果中每一行的数值, "
+                  "严格取数值最大/最小的那一行作答, 不要凭教室名称或常识猜测。"
                   "duration_sec 等时长字段单位是秒, 回答时换算成分钟或小时（如 13500秒→225分钟→3小时45分）。"
-                  "提到教室时必须用教室中文名称(name 列, 如 图书馆B1/三教201), "
-                  "禁止在答案中出现 camera_id、room_201 这类英文内部标识。"
-                  "推荐或介绍教室时格式为'教室名(地址)'，如 '图书馆B1(图书馆地下一层)'；"
-                  "若查询结果不含地址信息则只写教室名, 不要编造地址。"
+                  "提到教室时必须用教室中文名称(即查询结果中 name 列的值), "
+                  "禁止在答案中出现 camera_id 之类的英文内部标识。"
+                  "推荐或介绍教室时格式为'教室名(地址)'，地址必须用查询结果中 location 列的原值, "
+                  "不要编造、不要改写; 若查询结果不含地址信息则只写教室名。"
                   "时段按小时聚合时用整点区间表述(如 14:00-15:00), 不要编造分钟。")
     ans_prompt = (f"用户问题: {data.question}\n执行的SQL: {sql}\n"
                   f"查询结果(JSON, 空列表=无数据): {rows_text}\n请回答:")
@@ -846,7 +1013,8 @@ def ask(data: AskIn):
     except Exception as e:
         answer = f"(SQL 执行成功但组织答案失败: {e})\n原始数据: {rows_text}"
 
-    return {"question": data.question, "sql": sql, "rows": rows, "answer": answer}
+    return {"question": data.question, "sql": sql, "rows": rows,
+            "route": "llm", "answer": answer}
 
 
 # ---------- 用户认证与用户管理（门户 SSR） ----------

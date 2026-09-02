@@ -60,6 +60,9 @@ services:
   ollama:
     image: ollama/ollama:latest
     container_name: studysense-ollama
+    ports:
+      - "11435:11434"              # 宿主机 11435 → 容器 Ollama, 本地调试可直连容器内的生产模型
+                                   # (宿主机 11434 被原生 Ollama 服务占用, 且两者模型目录独立)
     volumes:
       # 直接挂载宿主机模型目录, 复用本地已下载的 qwen2.5:7b-instruct-q4_K_M, 免二次下载
       - ${USERPROFILE}/.ollama:/root/.ollama
