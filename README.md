@@ -2,7 +2,7 @@
 
 基于边缘计算的多人实时监测系统：在每间教室的摄像头上运行人头检测模型，实时统计**当前人数、空余座位、在座时长**，监测**摄像头异常**，并通过本地大模型提供**自然语言数据问答**（"今天几点人最少？"）。适用于自习室/图书馆的运营管理。
 
-系统包含三类前端：**挂墙可视化大屏**（实时监控）、**双角色管理门户**（普通用户：占用总览/收藏/历史规律/空座提醒/AI 问答；管理员：教室与用户管理）、**登录注册页**（访客可看全馆实时统计）。
+系统包含三类前端：**挂墙可视化大屏**（实时监控）、**双角色管理门户**（普通用户：占用总览/收藏/历史规律/座位预测/空座提醒/AI 问答；管理员：教室与用户管理）、**登录注册页**（访客可看全馆实时统计）。
 
 > 面试/求职读者请配合 [docs/项目详细介绍与面试要点.md](docs/项目详细介绍与面试要点.md)（项目详细介绍 + 面试要点指南）阅读。
 
@@ -261,7 +261,7 @@ threshold = np.where(pred_w * ratio < 32, 0.15, 0.35)
 
 **管理门户（templates/portal/，:8000，Jinja2 SSR 多页应用）**
 
-由 FastAPI 同源渲染（`/portal/login` `/portal/overview` 等 6 个页面），与 API 同端口部署、无需独立容器。会话存 **HttpOnly Cookie**（JS 不可读，XSS 偷不走），页面权限在服务端渲染时判定：未登录 302 到登录页、普通用户访问管理页被拦截。进入后左侧竖排导航切换页面。
+由 FastAPI 同源渲染（`/portal/login` `/portal/overview` 等 8 个页面），与 API 同端口部署、无需独立容器。会话存 **HttpOnly Cookie**（JS 不可读，XSS 偷不走），页面权限在服务端渲染时判定：未登录 302 到登录页、普通用户访问管理页被拦截、管理员访问预测/历史规律页重定向回总览。进入后左侧竖排导航切换页面。
 
 - **登录页**：左右分栏——左侧品牌区（Logo + 特性卡 + **未登录可见的实时统计**：教室数/座位数/当前空座），右侧登录/注册滑块切换
 - **占用总览**（所有角色）：教室卡片（进度条流光 + 悬停 3D 倾斜 + 点击涟漪）、搜索 + 占用状态筛选（宽松/适中/紧张）、⭐收藏（localStorage 持久化，可只看收藏）、座位变化提示
@@ -271,6 +271,7 @@ threshold = np.where(pred_w * ratio < 32, 0.15, 0.35)
   - 7 天 × 24 小时占用率热力图（ECharts heatmap，深蓝→红渐变，悬停数值）
   - 近 7 天日均值柱状图（渐变柱 + 均值虚线）；教室筛选（全馆/单教室）
 - **空座提醒**：授权浏览器 Notification 后，每 15 秒检查收藏教室，空座从 <3 翻转为 ≥3 时弹系统通知（5 分钟冷却）
+- **座位预测页签**（普通用户专属，管理员无入口）：预估未来 1~12 小时各教室空位数——基于过去 12 周**同星期同小时**的日均人数（数据不足时回退到同小时历史日均），按空位降序推荐教室⭐置顶，附样本量分级置信度；可解释的统计基线模型，预测方法直接展示给用户
 - **AI 助手**：聊天气泡 + 打字动画 + 快捷提问芯片（含"一周哪些时段最空""明天几点去最空"）；回答只给结论不展示 SQL 语句（后端调试接口保留 sql 字段）。AI 问答仅存在于管理门户，大屏不做问答
 - **管理员专属**：教室管理（新增/编辑/删除，可选级联清历史数据）、用户管理（新增/升降管理员/重置密码/删除，自我保护：不能删自己）
 
@@ -318,7 +319,7 @@ Ollama (qwen2.5:1.5b) 生成 SQL
 
 ### 3.7 模块七：用户认证与权限（server.py）
 
-- **口令安全**：PBKDF2-HMAC-SHA256（150k 迭代 + 16 字节随机盐）哈希入库，明文口令不落库
+- **口令安全**：PBKDF2-HMAC-SHA256（12 万迭代 + 16 字节随机盐）哈希入库，明文口令不落库
 - **无状态 Token**：`base64(用户名|过期时间)` + HMAC-SHA256 签名（服务器密钥），验证不查库，7 天有效
 - **首次启动自动建表 + 种子管理员**（admin/admin123，生产环境应改密）
 - **权限分层**：管理接口校验 `role=admin`（普通用户 403）；自我保护——不能删除自己、不能改自己角色
@@ -370,10 +371,15 @@ Ollama (qwen2.5:1.5b) 生成 SQL
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| username | VARCHAR(32) PK | 登录名 |
-| password_hash | VARCHAR(128) | PBKDF2-HMAC-SHA256（150k 迭代 + 16 字节盐） |
+| id | INT PK | 用户 ID（头像文件名即 uid） |
+| username | VARCHAR(32) UNIQUE | 登录名（注册时设置一次，之后不可改） |
+| nickname | VARCHAR(64) | 昵称/展示名（随时可在个人中心改） |
+| password_hash / password_salt | VARCHAR | PBKDF2-HMAC-SHA256（12 万迭代 + 随机盐） |
 | role | VARCHAR(16) | admin / user |
-| created_at | DATETIME | 注册时间 |
+| avatar | VARCHAR(255) | 头像 URL 路径（存 Docker 卷 avatar_data） |
+| created_at / last_login | DATETIME | 注册/最近登录 |
+
+旧表自动幂等迁移：启动时检测缺列（如 rooms 补 location、users 补 nickname/avatar）则 `ALTER TABLE ADD COLUMN`。
 
 ### 设计要点
 
@@ -409,6 +415,7 @@ POST /api/report
 | `GET /api/history` | hours, camera_id | 时间序列点（24h 趋势曲线） |
 | `GET /api/daily` | date, camera_id | 按小时聚合（AI 日报数据源） |
 | `GET /api/trends` | days, camera_id | **历史规律**：7天×24h 占用率热力矩阵 + 黄金/高峰时段 Top3（camera_id 空为全馆） |
+| `GET /api/forecast` | hours(1~12) | **座位预测**：未来逐小时各教室预估空位（12 周同星期同小时日均，样本不足回退同小时），普通用户专属 |
 | `GET /api/duration` | date, camera_id | 会话聚合：会话数/人均时长/累计/最长 |
 
 ### 认证与管理（门户）
@@ -417,9 +424,16 @@ POST /api/report
 POST /api/auth/register {"username":"stu01","password":"***"}   → 自动登录返回 token
 POST /api/auth/login    {"username":"admin","password":"***"}  → {"token":"...","user":{...}}
 GET  /api/auth/stats                                       → 登录页实时统计(无需 token)
-GET  /api/admin/users      [需管理员 token]                 → 用户列表
-POST /api/admin/users      [需管理员 token]                 → 新增用户(可选角色)
-PUT  /api/admin/users/{name}/role  [需管理员 token]          → 升降管理员 / 重置密码 / 删除
+GET  /api/auth/me       [需登录]                            → 当前用户信息
+GET  /api/admin/users   [需管理员 token]                     → 用户列表
+POST /api/admin/users   [需管理员 token]                     → 新增用户(可选角色)
+PUT  /api/admin/users/{uid} [需管理员 token]                  → 升降管理员 / 重置密码
+DELETE /api/admin/users/{uid} [需管理员 token]                → 删除用户
+
+# 个人中心
+POST /api/profile/nickname {"nickname":"..."}                → 改昵称(展示名)
+POST /api/profile/password {"old_password":"...","new_password":"..."} → 改密码
+POST /api/profile/avatar  (multipart/form-data, 字段 file)   → 上传头像(类型/2MB/魔数校验)
 ```
 
 所有需登录接口走 `Authorization: Bearer <token>`（HMAC 签名验证）；管理接口额外校验 role=admin。
@@ -547,7 +561,7 @@ face_test/
 │   ├── index.html               # 可视化大屏(单文件 52KB, ECharts CDN): KPI/卡片墙/座位点阵/趋势/告警
 │   │                            #   开头加载 config.js 读 window.__API_BASE__ → 大屏可独立部署的关键
 │   ├── logo.svg                 # 全站 Logo + favicon
-│   └── portal_static/           # 管理门户公共资源(6 个门户页共用)
+│   └── portal_static/           # 管理门户公共资源(8 个门户页共用; avatars/ 头像存 Docker 卷)
 │       ├── common.css           # 统一深色科技风样式(卡片/表单/弹窗/动效/粒子背景)
 │       └── common.js            # $ 选择器 / api() 带凭证请求封装 / 粒子+鼠标交互(避让/连线) / toast
 │
@@ -556,9 +570,11 @@ face_test/
 │   ├── login.html               # 登录/注册页: 品牌区(未登录可见实时统计) + 表单滑块切换
 │   ├── overview.html            # 占用总览(所有角色): 卡片墙/搜索筛选/⭐收藏/教室详情弹窗(座位点阵+24h趋势)
 │   ├── trends.html              # 历史规律(普通用户专属): 黄金/高峰时段卡片 + 7天×24h热力图 + 日均值柱
+│   ├── forecast.html            # 座位预测(普通用户专属): 未来1~12h逐小时空位预估卡片墙(推荐教室⭐置顶)
 │   ├── ai.html                  # AI 助手: 聊天气泡+打字动画+快捷提问芯片
 │   ├── rooms.html               # 教室管理(管理员): 增删改, 删除可选级联清历史数据
-│   └── users.html               # 用户管理(管理员): 新增/升降管理员/重置密码/删除(含自我保护)
+│   ├── users.html               # 用户管理(管理员): 新增/升降管理员/重置密码/删除(含自我保护)
+│   └── profile.html             # 个人中心: 头像上传/昵称修改/密码修改
 │
 ├── dashboard/                   # ── 大屏独立部署容器(nginx:alpine, 宿主机 8080) ──
 │   ├── Dockerfile               # 只 COPY 大屏两个文件, 镜像 ~10MB
@@ -620,3 +636,4 @@ face_test/
 | 10 | AI 模型 1.5b + 提示词强化 | 7b（更准但慢） | 7b 热响应几十秒体验差；schema 明确约束 + 内嵌正确 SQL 示例后 1.5b 准确率达标，响应 1.7s |
 | 11 | 空座提醒纯前端实现 | 后端 WebSocket 推送 | Notification API + 15s 轮询已够用，零后端改造成本；将来量大再升级 |
 | 12 | HMAC 签名 Token | JWT 库 | 无第三方依赖、逻辑 20 行、无状态验证；内部系统不需要 JWT 生态 |
+| 13 | 座位预测用统计基线（12 周同星期同小时日均） | 训练 ML 时序模型 | 自习室人流有强周周期（课表驱动），统计基线即可捕捉；数据量不足时 ML 反而过拟合；预测依据可完整向用户解释（可解释性即功能） |
