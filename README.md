@@ -4,7 +4,7 @@
 
 系统包含三类前端：**挂墙可视化大屏**（实时监控）、**双角色管理门户**（普通用户：占用总览/收藏/历史规律/空座提醒/AI 问答；管理员：教室与用户管理）、**登录注册页**（访客可看全馆实时统计）。
 
-> 面试/求职读者请配合 [PROJECT_INTRO.md](PROJECT_INTRO.md)（项目详细介绍 + 面试要点指南）阅读。
+> 面试/求职读者请配合 [docs/PROJECT_INTRO.md](docs/PROJECT_INTRO.md)（项目详细介绍 + 面试要点指南）阅读。
 
 > 本文档面向不熟悉本项目的读者，从零开始解释系统的每个部分是如何实现的，包括模型怎么训练出来、数据怎么流动、每个模块内部的算法逻辑。
 >
@@ -546,12 +546,11 @@ face_test/
 ├── models/                  # ONNX 检测模型（head_detect_1280 默认 / 960 速度折中 / face_detect 备用）
 ├── media/                   # 测试视频（test_room.mp4）
 ├── scripts/                 # 训练辅助脚本（convert_crowdhuman.py: odgt→YOLO 转换）
-├── docs/                    # 历史交接文档
+├── docs/                    # 文档（PROJECT_INTRO.md 介绍与面试要点 / 历史交接文档）
 ├── docker-compose.yml       # 一键编排: API(含门户SSR) + MySQL + Ollama + 大屏
 ├── Dockerfile               # API 服务镜像（FastAPI + Jinja2 模板）
 ├── .env.example             # 环境变量模板（复制为 .env 填密码/模型/密钥）
-├── README.md                # 需求与技术文档（本文档）
-└── PROJECT_INTRO.md         # 项目详细介绍 + 面试要点
+└── README.md                # 需求与技术文档（本文档）
 ```
 
 ---
