@@ -12,27 +12,28 @@
       <feGaussianBlur stdDeviation="2.5" result="b"/>
       <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
+    <style>
+      .seat { animation: st 2.2s ease-in-out infinite; }
+      @keyframes st { 0%, 100% { opacity: .4; } 50% { opacity: 1; } }
+      @media (prefers-reduced-motion: reduce) { .seat { animation: none; } }
+    </style>
   </defs>
 
-  <!-- 徽章底: 圆角方块 + 霓虹渐变描边 -->
-  <rect x="10" y="10" width="100" height="100" rx="26"
-        fill="#0a182e" stroke="url(#ssGrad)" stroke-width="3"/>
-
-  <!-- 座位网格 2×4: 上排空闲(青) 下排占用(绿)+1空闲 -->
+  <!-- 座位波纹矩阵 2×4: 上排空闲(青) 下排占用(绿)+1空闲, 依次呼吸 -->
   <g filter="url(#ssGlow)">
-    <rect x="34.5" y="28" width="9" height="9" rx="2.5" fill="#40c4ff" opacity=".9"/>
-    <rect x="48.5" y="28" width="9" height="9" rx="2.5" fill="#40c4ff" opacity=".9"/>
-    <rect x="62.5" y="28" width="9" height="9" rx="2.5" fill="#40c4ff" opacity=".9"/>
-    <rect x="76.5" y="28" width="9" height="9" rx="2.5" fill="#40c4ff" opacity=".9"/>
+    <rect class="seat" x="27" y="27" width="13" height="13" rx="3" fill="#40c4ff"/>
+    <rect class="seat" style="animation-delay:.35s" x="47" y="27" width="13" height="13" rx="3" fill="#40c4ff"/>
+    <rect class="seat" style="animation-delay:.7s" x="67" y="27" width="13" height="13" rx="3" fill="#40c4ff"/>
+    <rect class="seat" style="animation-delay:1.05s" x="87" y="27" width="13" height="13" rx="3" fill="#40c4ff"/>
 
-    <rect x="34.5" y="42" width="9" height="9" rx="2.5" fill="#00e676"/>
-    <rect x="48.5" y="42" width="9" height="9" rx="2.5" fill="#00e676"/>
-    <rect x="62.5" y="42" width="9" height="9" rx="2.5" fill="#00e676"/>
-    <rect x="76.5" y="42" width="9" height="9" rx="2.5" fill="#40c4ff" opacity=".9"/>
+    <rect class="seat" style="animation-delay:.35s" x="27" y="47" width="13" height="13" rx="3" fill="#00e676"/>
+    <rect class="seat" style="animation-delay:.7s" x="47" y="47" width="13" height="13" rx="3" fill="#00e676"/>
+    <rect class="seat" style="animation-delay:1.05s" x="67" y="47" width="13" height="13" rx="3" fill="#00e676"/>
+    <rect class="seat" style="animation-delay:1.4s" x="87" y="47" width="13" height="13" rx="3" fill="#40c4ff"/>
   </g>
 
   <!-- 实时心脉搏动线 -->
-  <path d="M30 66 h12 l4 -12 7 20 5 -14 4 6 h28"
+  <path d="M22 78 h16 l6 -14 9 24 7 -16 5 7 h33"
         fill="none" stroke="url(#ssGradH)" stroke-width="3.5"
         stroke-linecap="round" stroke-linejoin="round" filter="url(#ssGlow)"/>
 </svg>
