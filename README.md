@@ -50,7 +50,7 @@
 │  ③ MySQL 库 study_room   ⑤ Ollama 本地大模型（qwen2.5:1.5b, Text2SQL）      │
 │     │                                                                      │
 │     ▼                                                                      │
-│  ④ 可视化大屏 /ui/ (8000端口)  +  管理门户 portal (8501端口, 双角色)        │
+│  ④ 可视化大屏 /ui/ + 管理门户 /portal/ (均为8000端口, 门户为 SSR 多页应用)  │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -88,8 +88,8 @@
 | 后端 | FastAPI + PyMySQL | 异步、自动 Swagger 文档、轻量 |
 | 数据库 | MySQL 8.0 | 时序快照 + 会话记录，关系型足够 |
 | 大屏 | 单文件 HTML + ECharts | 零构建、挂任意屏幕、风格完全可控 |
-| 管理门户 | 原生 JS 单页应用（portal.html） | 与大屏同风格、零构建；含认证/收藏/历史规律/空座提醒 |
-| 认证 | PBKDF2 + HMAC 签名 Token | 无 JWT 依赖、无状态验证 |
+| 管理门户 | Jinja2 SSR 多页应用（FastAPI 同源渲染） | 页面权限服务端判定；HttpOnly Cookie 会话 + CSRF + 安全响应头 |
+| 认证 | PBKDF2 + HMAC 签名 Token | 无 JWT 依赖、无状态验证；Cookie 双通道（编程走 Bearer 头） |
 | LLM | Ollama + qwen2.5:1.5b（可切 7b） | 本地运行，数据不出内网；1.5b 热响应 ~1.7s |
 
 ---
@@ -261,9 +261,9 @@ threshold = np.where(pred_w * ratio < 32, 0.15, 0.35)
 2. **相对时间跳动**：每张卡片的上报时间显示"刚刚 → 14秒前 → 3分钟前"**每秒更新**，10 秒内绿色、超 1 小时变红——一眼看出哪间教室掉线
 3. **趋势曲线流式追加**：曲线独立 2.5 秒刷新（比主刷新快一倍），新数据点带 600ms 动画滑入、60 点滚动窗口旧点滑出、末端呼吸光点随最新值跳动；同一分钟内的多次上报只更新最后一个点（平滑不抖）
 
-**管理门户（web/portal.html，:8501，原生 JS 单页应用）**
+**管理门户（templates/portal/，:8000，Jinja2 SSR 多页应用）**
 
-由轻量静态服务器 [serve_portal.py](serve_portal.py) 托管（根路径自动定位登录页，支持 `/login` `/portal` 语义路由）。登录态存 sessionStorage，进入后左侧竖排导航切换视图。
+由 FastAPI 同源渲染（`/portal/login` `/portal/overview` 等 6 个页面），与 API 同端口部署、无需独立容器。会话存 **HttpOnly Cookie**（JS 不可读，XSS 偷不走），页面权限在服务端渲染时判定：未登录 302 到登录页、普通用户访问管理页被拦截。进入后左侧竖排导航切换页面。
 
 - **登录页**：左右分栏——左侧品牌区（Logo + 特性卡 + **未登录可见的实时统计**：教室数/座位数/当前空座），右侧登录/注册滑块切换
 - **占用总览**（所有角色）：教室卡片（进度条流光 + 悬停 3D 倾斜 + 点击涟漪）、搜索 + 占用状态筛选（宽松/适中/紧张）、⭐收藏（localStorage 持久化，可只看收藏）、座位变化提示
@@ -276,7 +276,15 @@ threshold = np.where(pred_w * ratio < 32, 0.15, 0.35)
 - **AI 助手**：聊天气泡 + 打字动画 + 快捷提问芯片（含"一周哪些时段最空""明天几点去最空"），可展开 SQL
 - **管理员专属**：教室管理（新增/编辑/删除，可选级联清历史数据）、用户管理（新增/升降管理员/重置密码/删除，自我保护：不能删自己）
 
-**为什么弃用 Streamlit**：早期管理页用 Streamlit 开发效率高，但无法与大屏保持统一视觉风格（深色科技风、动效、鼠标交互），且容器镜像臃肿（~900MB）。改为原生 JS 单页应用后镜像缩至 ~150MB，风格完全统一。
+**为什么弃用 Streamlit 与纯前端 SPA**：早期管理页用 Streamlit 开发效率高，但无法与大屏保持统一视觉风格且镜像臃肿（~900MB）；中期改为原生 JS 单页应用（风格统一、零构建），但 token 存 localStorage 有 XSS 风险、权限判定全在浏览器端。最终改为 **Jinja2 SSR 多页应用**：安全（服务端权限判定 + HttpOnly Cookie + CSRF 双保险 + CSP 等安全响应头 + 登录防爆破）、体验不打折（同一套 CSS/动效），还省掉一个独立容器。
+
+**门户安全设计**（相对纯前端 SPA 的加固点）：
+
+- **HttpOnly Cookie 会话**：token 由服务端 `Set-Cookie` 写入，JS 完全不可读；`SameSite=Strict` 拦截跨站携带
+- **CSRF 防护**：Cookie 会话下的写操作强制校验 `X-Requested-With` 自定义头（跨站表单/图片无法伪造）
+- **安全响应头**：CSP（仅允许自身 + ECharts CDN）、`X-Frame-Options: DENY`、`nosniff`、`Referrer-Policy`；会话相关页面 `Cache-Control: no-store`
+- **登录防爆破**：同一用户名连续失败 5 次锁定 15 分钟
+- **双通道认证**：浏览器走 Cookie，编程调用走 `Authorization: Bearer`（兼容脚本/大屏）
 
 ### 3.6 模块六：AI 问答（Text2SQL + 本地 Ollama）
 
@@ -462,7 +470,7 @@ GET /api/alerts?limit=5
 # 1. 准备环境变量
 Copy-Item .env.example .env    # 编辑: MYSQL_PASSWORD / OLLAMA_MODEL / TOKEN_SECRET
 
-# 2. 拉起 4 容器（api + mysql + dashboard + ollama）
+# 2. 拉起 3 容器（api + mysql + ollama; 门户 SSR 已并入 api 容器）
 docker compose up -d --build
 
 # 3. （可选）拉取 AI 模型
@@ -473,7 +481,7 @@ docker exec studysense-ollama ollama pull qwen2.5:1.5b
 
 | 页面 | 地址 | 说明 |
 |---|---|---|
-| **管理门户** | http://localhost:8501 | 根路径自动定位登录页；种子账号 admin/admin123 |
+| **管理门户** | http://localhost:8000/portal/login | SSR 多页应用；种子账号 admin/admin123 |
 | **可视化大屏** | http://localhost:8000/ui | 挂墙监控 |
 | **API 文档** | http://localhost:8000/docs | Swagger |
 
@@ -486,23 +494,20 @@ MySQL 映射到宿主机 **3307**（避开本机 3306）；Ollama 直接挂载�
 ```powershell
 conda create -n face_test python=3.10 -y
 conda activate face_test
-pip install fastapi uvicorn pymysql requests onnxruntime-directml opencv-python numpy streamlit plotly
+pip install fastapi uvicorn pymysql requests jinja2 onnxruntime-directml opencv-python numpy streamlit plotly
 
-# 终端 1: 后端（含大屏; 密码走环境变量, 不落盘）
+# 终端 1: 后端（含大屏 + 管理门户 SSR; 密码走环境变量, 不落盘）
 $env:MYSQL_PASSWORD="你的MySQL密码"
 uvicorn server:app --port 8000
 
-# 终端 2: 管理门户（轻量静态服务, 根路径即登录页）
-python serve_portal.py
-
-# 终端 3: 边缘采集（真实摄像头; 测试视频则 --source 换文件路径）
+# 终端 2: 边缘采集（真实摄像头; 测试视频则 --source 换文件路径）
 python edge_agent.py --source 0 --camera-id room_201 --interval 30
 
-# 终端 4（可选, 本地开发工具）: Streamlit 模拟测试页
+# 终端 3（可选, 本地开发工具）: Streamlit 模拟测试页
 streamlit run dashboard.py
 ```
 
-打开：大屏 http://127.0.0.1:8000/ui/ ，门户 http://localhost:8501/ 。
+打开：大屏 http://127.0.0.1:8000/ui/ ，门户 http://127.0.0.1:8000/portal/login 。
 
 ---
 
@@ -534,16 +539,15 @@ face_test/
 ├── tracker.py               # IOU+质心跟踪器: 轨迹确认/老化/会话归档
 ├── camera_guard.py          # 摄像头异常守卫: 遮挡/移动检测
 ├── dashboard.py             # Streamlit 模拟测试页（本地开发工具, 非部署件）
-├── serve_portal.py          # 门户轻量静态服务器: 根路径自动定位登录页
 ├── web/index.html           # 可视化大屏（单文件, ECharts CDN）
-├── web/portal.html          # 管理门户 SPA（登录/注册 + 用户端 + 管理端）
+├── web/portal_static/       # 管理门户公共静态资源（CSS/JS）
 ├── web/logo.svg             # 全站 Logo + favicon
+├── templates/portal/        # 管理门户 SSR 模板（登录/总览/历史/AI/教室/用户 6 页）
 ├── head_detect_1280.onnx   # 检测模型（精度优先）
 ├── head_detect_960.onnx     # 检测模型（速度折中）
 ├── convert_crowdhuman.py    # odgt→YOLO 数据转换（训练用）
-├── docker-compose.yml       # 一键编排: API + MySQL + 门户 + Ollama
-├── Dockerfile               # API 服务镜像
-├── Dockerfile.dashboard     # 门户静态服务镜像（~150MB）
+├── docker-compose.yml       # 一键编排: API(含门户SSR) + MySQL + Ollama
+├── Dockerfile               # API 服务镜像（FastAPI + Jinja2 模板）
 ├── .env.example             # 环境变量模板（复制为 .env 填密码/模型/密钥）
 ├── test_room.mp4            # 测试视频
 ├── README.md                # 需求与技术文档（本文档）

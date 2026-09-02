@@ -132,9 +132,9 @@ threshold = np.where(pred_w * ratio < 32, 0.15, 0.35)
 | 认证 | PBKDF2 + HMAC 签名 Token | 无 JWT 依赖、无状态、7 天有效 |
 | 数据库 | MySQL 8.0 | 时序快照 + 会话 + 用户，关系型足够 |
 | 大屏 | 单文件 HTML + ECharts | 零构建、挂任意屏幕 |
-| 管理门户 | 原生 JS 单页应用（portal.html） | 与大屏同风格、零构建；替代了早期的 Streamlit |
+| 管理门户 | Jinja2 SSR 多页应用（FastAPI 同源渲染） | 服务端权限判定 + HttpOnly Cookie + CSRF；替代了 Streamlit 与前端 SPA |
 | LLM | Ollama + qwen2.5:1.5b（可切 7b） | 本地运行数据不出内网；1.5b 热响应 1.7s |
-| 部署 | Docker Compose（4 容器） | api / mysql / dashboard / ollama 一键拉起 |
+| 部署 | Docker Compose（3 容器） | api（含门户 SSR）/ mysql / ollama 一键拉起 |
 
 ---
 
@@ -200,9 +200,9 @@ letterbox 而非直接 resize：拉伸会把头压扁变形，与训练分布不
 - 座位点阵（按占用数从左至右填充，绿=占/蓝=空，弹跳动画）
 - AI 问答抽屉、告警条、粒子背景 + 鼠标交互（粒子避让/连线、卡片 3D 倾斜、点击涟漪）
 
-### 4.7 管理门户（web/portal.html，:8501）
+### 4.7 管理门户（templates/portal/，:8000，Jinja2 SSR 多页应用）
 
-单页应用（原生 JS），由轻量静态服务器 [serve_portal.py](serve_portal.py) 托管（根路径自动定位登录页）。
+由 FastAPI 同源渲染 6 个页面（登录/总览/历史规律/AI/教室管理/用户管理），与 API 同端口部署。会话存 **HttpOnly Cookie**（XSS 偷不走），写操作校验 `X-Requested-With` 头（CSRF 防护），页面权限服务端判定；登录连续失败 5 次锁定 15 分钟。
 
 - **登录页**：左右分栏——左侧品牌区（Logo + 特性卡 + **未登录可见的实时统计**），右侧登录/注册滑块切换 Tab
 - **占用总览**：教室卡片（进度条流光 + 3D 倾斜 + 涟漪）、搜索 + 状态筛选、收藏（localStorage 持久化）

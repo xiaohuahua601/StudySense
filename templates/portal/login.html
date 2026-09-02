@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>登录 · StudySense 管理门户</title>
+<link rel="icon" type="image/svg+xml" href="/ui/logo.svg">
+<link rel="stylesheet" href="/portal-static/common.css">
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<div id="authView">
+  <!-- 左侧品牌信息区 -->
+  <div class="auth-left">
+    <img src="/ui/logo.svg" alt="StudySense Logo" width="76" height="76" style="margin-bottom:16px">
+    <div class="auth-hero-title">
+      <span style="background:linear-gradient(90deg,#00d4ff,#7df9ff,#00e676,#00d4ff);background-size:300% 100%;-webkit-background-clip:text;background-clip:text;color:transparent;animation:neonFlow 6s linear infinite">StudySense</span><br>自习室智能监测平台
+    </div>
+    <div class="auth-hero-sub">视觉识别 × 实时数据 × AI 问答<br>多教室统一的座位占用感知与管理</div>
+    <div class="feat"><span class="f-icon">📊</span><div><div class="f-t">实时占用总览</div><div class="f-d">多教室占用率、空闲座位一屏尽览，5 秒自动刷新</div></div></div>
+    <div class="feat"><span class="f-icon">🤖</span><div><div class="f-t">AI 智能问答</div><div class="f-d">"现在哪间教室空座最多？" 自然语言直接问数据</div></div></div>
+    <div class="feat"><span class="f-icon">🛡️</span><div><div class="f-t">角色分级管理</div><div class="f-d">管理员管理教室与用户，普通用户专注查询</div></div></div>
+    <div class="feat"><span class="f-icon">⭐</span><div><div class="f-t">收藏与筛选</div><div class="f-d">收藏常用教室，按宽松 / 适中 / 紧张快速筛选</div></div></div>
+    <div class="auth-hero-stat">
+      <div class="hs-item"><div class="hs-v" id="hsRooms">--</div><div class="hs-l">在线教室</div></div>
+      <div class="hs-item"><div class="hs-v" id="hsSeats">--</div><div class="hs-l">监测座位</div></div>
+      <div class="hs-item"><div class="hs-v" id="hsFree">--</div><div class="hs-l">当前空座</div></div>
+    </div>
+  </div>
+  <!-- 右侧登录卡片 -->
+  <div class="panel auth-card" id="authCard">
+    <div class="auth-logo"><img src="/ui/logo.svg" alt="StudySense" width="56" height="56"></div>
+    <div class="auth-title">StudySense</div>
+    <div class="auth-sub">自习室智能监测 · 管理门户</div>
+    <div class="auth-tabs" id="authTabs">
+      <div class="slider"></div>
+      <div class="tab on" data-t="login">登 录</div>
+      <div class="tab" data-t="reg">注 册</div>
+    </div>
+    <div id="loginForm">
+      <label>用户名</label>
+      <input id="liUser" placeholder="请输入用户名" autocomplete="username">
+      <label>密码</label>
+      <input id="liPass" type="password" placeholder="请输入密码" autocomplete="current-password">
+      <div class="form-err" id="liErr"></div>
+      <button class="btn primary btn-auth" id="liBtn">登 录</button>
+    </div>
+    <div id="regForm" style="display:none">
+      <label>用户名（2-32位，字母/数字/下划线/中文）</label>
+      <input id="rgUser" placeholder="设置用户名">
+      <label>密码（至少 6 位）</label>
+      <input id="rgPass" type="password" placeholder="设置密码">
+      <label>确认密码</label>
+      <input id="rgPass2" type="password" placeholder="再次输入密码">
+      <div class="form-err" id="rgErr"></div>
+      <button class="btn primary btn-auth" id="rgBtn">注 册</button>
+    </div>
+    <div class="auth-hint">首次部署内置管理员: <b>admin / admin123</b><br>普通用户可直接注册, 管理员身份由后台分配</div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+
+/* 登录页实时统计（公开数据, 无需登录） */
+async function refreshAuthStats() {
+  try {
+    const r = await fetch("/api/overview");
+    const d = await r.json();
+    const s = d.summary || {};   // 聚合字段嵌套在 summary 里
+    $("#hsRooms").textContent = s.room_count ?? "--";
+    $("#hsSeats").textContent = s.total_seats ?? "--";
+    $("#hsFree").textContent = (s.total_seats ?? 0) - (s.total_occupied ?? 0);
+  } catch { /* 后端未就绪时忽略 */ }
+}
+refreshAuthStats();
+setInterval(refreshAuthStats, 5000);
+
+/* Tab 切换 */
+document.querySelectorAll("#authTabs .tab").forEach(t => {
+  t.addEventListener("click", () => {
+    document.querySelectorAll("#authTabs .tab").forEach(x => x.classList.toggle("on", x === t));
+    const reg = t.dataset.t === "reg";
+    $("#authTabs").classList.toggle("reg", reg);
+    $("#loginForm").style.display = reg ? "none" : "";
+    $("#regForm").style.display = reg ? "" : "none";
+  });
+});
+
+async function doLogin() {
+  const u = $("#liUser").value.trim(), p = $("#liPass").value;
+  const err = $("#liErr"); err.textContent = "";
+  if (!u || !p) { err.textContent = "请输入用户名和密码"; return; }
+  const btn = $("#liBtn"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>登录中…';
+  try {
+    const r = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+      credentials: "same-origin",
+      body: JSON.stringify({ username: u, password: p }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    location.href = "/portal/overview";   // 会话 Cookie 由服务端 Set-Cookie 写入
+  } catch (ex) { err.textContent = ex.message; }
+  btn.disabled = false; btn.textContent = "登 录";
+}
+
+async function doRegister() {
+  const u = $("#rgUser").value.trim(), p = $("#rgPass").value, p2 = $("#rgPass2").value;
+  const err = $("#rgErr"); err.textContent = "";
+  if (!u || !p) { err.textContent = "请填写用户名和密码"; return; }
+  if (p !== p2) { err.textContent = "两次输入的密码不一致"; return; }
+  if (p.length < 6) { err.textContent = "密码至少 6 位"; return; }
+  const btn = $("#rgBtn"); btn.disabled = true; btn.innerHTML = '<span class="spin"></span>注册中…';
+  try {
+    const r = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Requested-With": "XMLHttpRequest" },
+      credentials: "same-origin",
+      body: JSON.stringify({ username: u, password: p }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(data.detail || r.statusText);
+    $("#liUser").value = u; $("#liPass").value = p;
+    document.querySelector('#authTabs .tab[data-t="login"]').click();
+    doLogin();
+  } catch (ex) { err.textContent = ex.message; }
+  btn.disabled = false; btn.textContent = "注 册";
+}
+
+$("#liBtn").addEventListener("click", doLogin);
+$("#rgBtn").addEventListener("click", doRegister);
+$("#liPass").addEventListener("keydown", e => { if (e.key === "Enter") doLogin(); });
+$("#rgPass2").addEventListener("keydown", e => { if (e.key === "Enter") doRegister(); });
+</script>
+</body>
+</html>

@@ -26,8 +26,10 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import pymysql
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from fastapi.security.utils import get_authorization_scheme_param
 from pydantic import BaseModel, Field
 
@@ -43,11 +45,21 @@ DB_CONFIG = {
 
 app = FastAPI(title="自习室座位监测系统", version="0.1.0")
 
-# 门户(8501) 与大屏(8000) 不同源, 放行跨域
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
-)
+# 门户 SSR 与 API 同源部署(8000), 不再需要 CORS 跨域; 统一注入安全响应头
+@app.middleware("http")
+async def _security_headers(request: Request, call_next):
+    resp = await call_next(request)
+    resp.headers.setdefault("X-Content-Type-Options", "nosniff")
+    resp.headers.setdefault("X-Frame-Options", "DENY")
+    resp.headers.setdefault("Referrer-Policy", "same-origin")
+    if request.url.path.startswith(("/portal", "/api/auth")):
+        resp.headers.setdefault("Cache-Control", "no-store")   # 会话相关页面与接口不落缓存
+    if request.url.path.startswith("/portal"):
+        # CSP: 仅允许自身 + ECharts CDN; 内联脚本/样式(单文件页面风格)保留
+        resp.headers.setdefault("Content-Security-Policy",
+            "default-src 'self'; script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'")
+    return resp
 
 # ---------- 用户认证配置 ----------
 TOKEN_SECRET = os.environ.get("TOKEN_SECRET", secrets.token_hex(32))
@@ -798,7 +810,7 @@ def ask(data: AskIn):
     return {"question": data.question, "sql": sql, "rows": rows, "answer": answer}
 
 
-# ---------- 用户认证与用户管理（8501 门户） ----------
+# ---------- 用户认证与用户管理（门户 SSR） ----------
 
 class RegisterIn(BaseModel):
     username: str = Field(..., min_length=2, max_length=32, pattern=r"^[A-Za-z0-9_\u4e00-\u9fa5]+$")
@@ -834,12 +846,22 @@ class UserUpdateIn(BaseModel):
 from fastapi import Header  # noqa: E402
 
 
-def current_user(authorization: Optional[str] = Header(None)) -> dict:
-    if not authorization:
+def current_user(request: Request, authorization: Optional[str] = Header(None)) -> dict:
+    """双通道认证: Bearer Token(编程调用) 或 HttpOnly Cookie(门户会话)
+    Cookie 会话下的写操作要求 X-Requested-With 自定义头 —— 跨站表单/图片无法携带,
+    作为 CSRF 防护(SameSite=Strict 之外的第二道保险)"""
+    token = None
+    if authorization:
+        scheme, t = get_authorization_scheme_param(authorization)
+        if scheme.lower() == "bearer" and t:
+            token = t
+    elif request.cookies.get("st_session"):
+        if request.method not in ("GET", "HEAD", "OPTIONS") and \
+                request.headers.get("x-requested-with") != "XMLHttpRequest":
+            raise HTTPException(403, "缺少 CSRF 校验头")
+        token = request.cookies["st_session"]
+    if not token:
         raise HTTPException(401, "未登录")
-    scheme, token = get_authorization_scheme_param(authorization)
-    if scheme.lower() != "bearer" or not token:
-        raise HTTPException(401, "无效的认证头")
     data = _parse_token(token)
     if not data:
         raise HTTPException(401, "登录已过期, 请重新登录")
@@ -873,22 +895,36 @@ def register(data: RegisterIn):
         db.close()
 
 
+_login_fails = {}   # username -> [连续失败次数, 锁定截止时间戳]; 内存态, 重启清零
+
+
 @app.post("/api/auth/login")
-def login(data: LoginIn):
+def login(data: LoginIn, request: Request):
+    # 暴力破解防护: 同一用户名连续失败 5 次锁定 15 分钟
+    now = time.time()
+    fails = _login_fails.get(data.username)
+    if fails and fails[1] > now:
+        raise HTTPException(429, f"尝试次数过多, 请 {int((fails[1] - now) // 60) + 1} 分钟后再试")
     db = get_db()
     try:
         with db.cursor() as cur:
             cur.execute("SELECT * FROM users WHERE username=%s", (data.username,))
             row = cur.fetchone()
         if not row or not _verify_pwd(data.password, row["password_salt"], row["password_hash"]):
+            count = (fails[0] + 1) if fails else 1
+            _login_fails[data.username] = [count, now + 900] if count >= 5 else [count, 0]
             raise HTTPException(401, "用户名或密码错误")
         with db.cursor() as cur:
             cur.execute("UPDATE users SET last_login=NOW() WHERE id=%s", (row["id"],))
         db.commit()
+        _login_fails.pop(data.username, None)
         token = _make_token(row["id"], row["username"], row["role"])
-        return {"token": token,
-                "user": UserOut(id=row["id"], username=row["username"], role=row["role"],
-                                created_at=row["created_at"], last_login=datetime.now())}
+        resp = JSONResponse({"token": token,
+                             "user": {"id": row["id"], "username": row["username"], "role": row["role"]}})
+        # HttpOnly: JS 完全不可读, XSS 偷不走; SameSite=Strict: 跨站请求不带 Cookie
+        resp.set_cookie("st_session", token, httponly=True, samesite="strict",
+                         max_age=TOKEN_TTL, path="/")
+        return resp
     finally:
         db.close()
 
@@ -982,6 +1018,86 @@ def admin_delete_user(uid: int, admin: dict = Depends(require_admin)):
 
 
 # ---------- 可视化大屏（web/index.html） ----------
-from fastapi.staticfiles import StaticFiles  # noqa: E402
+from fastapi.responses import JSONResponse  # noqa: E402
 
-app.mount("/ui", StaticFiles(directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "web"), html=True))
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app.mount("/ui", StaticFiles(directory=os.path.join(BASE_DIR, "web"), html=True))
+
+# ---------- 管理门户（SSR 多页应用: Jinja2 模板 + HttpOnly Cookie 会话） ----------
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
+app.mount("/portal-static", StaticFiles(directory=os.path.join(BASE_DIR, "web", "portal_static")), name="portal_static")
+
+
+def _page_user(request: Request) -> Optional[dict]:
+    t = request.cookies.get("st_session")
+    return _parse_token(t) if t else None
+
+
+def _require_page(request: Request, admin: bool = False):
+    """SSR 页面守卫: 未登录 → 重定向登录页; 无权限 → 重定向总览(带 denied 标记)"""
+    u = _page_user(request)
+    if not u:
+        return RedirectResponse("/portal/login", status_code=302), None
+    if admin and u.get("role") != "admin":
+        return RedirectResponse("/portal/overview?denied=1", status_code=302), None
+    return None, u
+
+
+@app.get("/portal/login", name="portal_login")
+def portal_login(request: Request):
+    if _page_user(request):                       # 已登录直接进应用
+        return RedirectResponse("/portal/overview", status_code=302)
+    return templates.TemplateResponse(request, "portal/login.html")
+
+
+@app.get("/portal")
+@app.get("/portal/overview")
+def portal_overview(request: Request):
+    r, u = _require_page(request)
+    if r:
+        return r
+    return templates.TemplateResponse(request, "portal/overview.html",
+                                      {"user": u, "active": "overview"})
+
+
+@app.get("/portal/trends")
+def portal_trends(request: Request):
+    r, u = _require_page(request)
+    if r:
+        return r
+    return templates.TemplateResponse(request, "portal/trends.html",
+                                      {"user": u, "active": "trends"})
+
+
+@app.get("/portal/ai")
+def portal_ai(request: Request):
+    r, u = _require_page(request)
+    if r:
+        return r
+    return templates.TemplateResponse(request, "portal/ai.html",
+                                      {"user": u, "active": "ai"})
+
+
+@app.get("/portal/rooms")
+def portal_rooms(request: Request):
+    r, u = _require_page(request, admin=True)
+    if r:
+        return r
+    return templates.TemplateResponse(request, "portal/rooms.html",
+                                      {"user": u, "active": "rooms"})
+
+
+@app.get("/portal/users")
+def portal_users(request: Request):
+    r, u = _require_page(request, admin=True)
+    if r:
+        return r
+    return templates.TemplateResponse(request, "portal/users.html",
+                                      {"user": u, "active": "users"})
+
+
+@app.post("/portal/logout")
+def portal_logout():
+    resp = RedirectResponse("/portal/login", status_code=302)
+    resp.delete_cookie("st_session", path="/")
+    return resp

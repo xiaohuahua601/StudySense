@@ -1,0 +1,64 @@
+{% extends "portal/base.html" %}
+{% block title %}AI 助手 · StudySense{% endblock %}
+{% block main %}
+<div class="panel ai-wrap" style="display:flex;flex-direction:column">
+  <div>
+    <h2 style="color:#fff;font-size:17px">🤖 AI 智能问答</h2>
+    <div style="font-size:12px;color:#5a7fb5;margin-top:4px">数据驱动 · 支持自然语言查询实时/历史占用、推荐教室</div>
+    <div class="quick">
+      <span class="q" data-q="现在哪间教室空座最多？">现在哪间教室空座最多？</span>
+      <span class="q" data-q="推荐一间人少安静的自习室">推荐一间人少安静的自习室</span>
+      <span class="q" data-q="过去一周哪天自习的人最多？">过去一周哪天人最多？</span>
+      <span class="q" data-q="过去一周哪几天、哪些时段人最少？">一周哪些时段最空？</span>
+      <span class="q" data-q="明天什么时间去自习最容易找到空座？">明天几点去最空？</span>
+    </div>
+  </div>
+  <div id="chatBox"></div>
+  <div class="chat-input">
+    <input id="chatInput" placeholder="输入问题，例如: 三教201现在有空座吗？" maxlength="200">
+    <button class="btn primary" id="btnSend">发送 ➤</button>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ================= AI 助手 ================= */
+function addMsg(cls, html) {
+  const d = document.createElement("div");
+  d.className = "msg " + cls;
+  d.innerHTML = html;
+  $("#chatBox").appendChild(d);
+  $("#chatBox").scrollTop = 1e9;
+  return d;
+}
+
+async function sendQuestion(q, cam = null) {
+  if (!q.trim()) return;
+  addMsg("me", q);
+  const tip = document.createElement("div");
+  tip.className = "typing"; tip.innerHTML = "<i></i><i></i><i></i>";
+  $("#chatBox").appendChild(tip); $("#chatBox").scrollTop = 1e9;
+  $("#chatInput").value = "";
+  try {
+    const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ question: q, camera_id: cam }) });
+    tip.remove();
+    addMsg("ai", `${r.answer.replace(/</g, "&lt;")}<br>
+      <span class="sql-toggle" onclick="this.nextElementSibling.classList.toggle('show')">▸ 查看 SQL</span>
+      <pre>${(r.sql || "").replace(/</g, "&lt;")}</pre>`);
+  } catch (ex) {
+    tip.remove();
+    addMsg("ai", "⚠️ " + ex.message);
+  }
+}
+
+$("#btnSend").addEventListener("click", () => sendQuestion($("#chatInput").value));
+$("#chatInput").addEventListener("keydown", e => { if (e.key === "Enter") sendQuestion($("#chatInput").value); });
+document.querySelectorAll(".quick .q").forEach(q =>
+  q.addEventListener("click", () => sendQuestion(q.dataset.q)));
+
+/* 从其他页跳转带来自动提问（如总览的"问 AI 这间教室"） */
+const _p = new URLSearchParams(location.search);
+if (_p.get("q")) sendQuestion(_p.get("q"), _p.get("cam") || null);
+</script>
+{% endblock %}

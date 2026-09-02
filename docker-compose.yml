@@ -1,5 +1,5 @@
 services:
-  # ---------- 后端 API + 可视化大屏 ----------
+  # ---------- 后端 API + 可视化大屏 + 管理门户(SSR) ----------
   api:
     build: .
     container_name: studysense-api
@@ -38,20 +38,6 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
-    restart: unless-stopped
-
-  # ---------- 管理门户（登录/注册 + 用户端 + 管理端 SPA） ----------
-  dashboard:
-    build:
-      context: .
-      dockerfile: Dockerfile.dashboard
-    container_name: studysense-dashboard
-    ports:
-      - "8501:8501"
-    environment:
-      TZ: Asia/Shanghai
-    depends_on:
-      - api
     restart: unless-stopped
 
   # ---------- Ollama 大模型服务 ----------

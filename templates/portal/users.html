@@ -1,0 +1,106 @@
+{% extends "portal/base.html" %}
+{% block title %}用户管理 · StudySense{% endblock %}
+{% block main %}
+<div class="panel">
+  <div class="tbl-title">
+    <h2>👥 用户管理</h2>
+    <button class="btn primary sm" id="btnAddUser">＋ 新增用户</button>
+  </div>
+  <table>
+    <thead><tr><th>ID</th><th>用户名</th><th>角色</th><th>注册时间</th><th>最近登录</th><th>操作</th></tr></thead>
+    <tbody id="userTbody"></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ================= 管理端: 用户管理 ================= */
+async function loadUserAdmin() {
+  try {
+    const users = await api("/api/admin/users");
+    $("#userTbody").innerHTML = users.map(u => `<tr>
+      <td style="color:#5a7fb5">${u.id}</td>
+      <td><b style="color:#fff">${u.username}</b>${u.id === ME.uid ? ' <span style="color:#5a7fb5;font-size:11px">(我)</span>' : ""}</td>
+      <td><span class="role-badge ${u.role}">${u.role === "admin" ? "管理员" : "普通用户"}</span></td>
+      <td>${(u.created_at || "").slice(0, 19)}</td>
+      <td>${(u.last_login || "--").slice(0, 19)}</td>
+      <td style="white-space:nowrap">
+        ${u.id !== ME.uid ? `
+        <button class="btn ghost sm" onclick="toggleRole(${u.id},'${u.role}')">${u.role === "admin" ? "降为用户" : "升为管理员"}</button>
+        <button class="btn ghost sm" onclick="resetPwd(${u.id},'${u.username}')">重置密码</button>
+        <button class="btn danger sm" onclick="delUser(${u.id},'${u.username}')">删除</button>` : '<span style="color:#4a6a96">当前账号</span>'}
+      </td></tr>`).join("");
+  } catch (ex) {
+    $("#userTbody").innerHTML = `<tr><td colspan="6" class="empty" style="color:#ff8a80">加载失败: ${ex.message}</td></tr>`;
+  }
+}
+
+$("#btnAddUser").addEventListener("click", () => {
+  openModal(`<h3>新增用户</h3>
+    <label>用户名 *</label><input id="uName" placeholder="2-32位">
+    <label>初始密码 *</label><input id="uPass" placeholder="至少 6 位">
+    <label>角色</label>
+    <select id="uRole"><option value="user">普通用户</option><option value="admin">管理员</option></select>
+    <div class="form-err" id="uErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn primary sm" id="uSave">创建用户</button>
+    </div>`);
+  $("#uSave").addEventListener("click", async () => {
+    const body = { username: $("#uName").value.trim(), password: $("#uPass").value, role: $("#uRole").value };
+    if (!body.username || !body.password) { $("#uErr").textContent = "请填写完整"; return; }
+    try {
+      await api("/api/admin/users", { method: "POST", body: JSON.stringify(body) });
+      closeModal(); loadUserAdmin();
+    } catch (ex) { $("#uErr").textContent = ex.message; }
+  });
+});
+
+async function toggleRole(uid, role) {
+  try {
+    await api(`/api/admin/users/${uid}`, { method: "PUT", body: JSON.stringify({ role: role === "admin" ? "user" : "admin" }) });
+    loadUserAdmin();
+  } catch (ex) {
+    $("#userTbody").innerHTML = `<tr><td colspan="6" class="empty" style="color:#ff8a80">${ex.message}</td></tr>`;
+  }
+}
+
+function resetPwd(uid, name) {
+  openModal(`<h3>重置密码</h3>
+    <p style="font-size:13px;color:#7dc5ff;margin-top:8px">为用户 <b style="color:#fff">${name}</b> 设置新密码：</p>
+    <label>新密码</label><input id="npwd" placeholder="至少 6 位">
+    <div class="form-err" id="npErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn primary sm" id="npSave">确认重置</button>
+    </div>`);
+  $("#npSave").addEventListener("click", async () => {
+    const p = $("#npwd").value;
+    if (p.length < 6) { $("#npErr").textContent = "密码至少 6 位"; return; }
+    try {
+      await api(`/api/admin/users/${uid}`, { method: "PUT", body: JSON.stringify({ password: p }) });
+      closeModal();
+    } catch (ex) { $("#npErr").textContent = ex.message; }
+  });
+}
+
+function delUser(uid, name) {
+  openModal(`<h3>删除用户</h3>
+    <p style="margin-top:12px;font-size:14px">确定删除用户 <b style="color:#fff">${name}</b>？该操作不可恢复。</p>
+    <div class="form-err" id="duErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn danger sm" id="duOk">确认删除</button>
+    </div>`);
+  $("#duOk").addEventListener("click", async () => {
+    try {
+      await api(`/api/admin/users/${uid}`, { method: "DELETE" });
+      closeModal(); loadUserAdmin();
+    } catch (ex) { $("#duErr").textContent = ex.message; }
+  });
+}
+
+loadUserAdmin();
+</script>
+{% endblock %}

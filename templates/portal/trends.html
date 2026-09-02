@@ -1,0 +1,144 @@
+{% extends "portal/base.html" %}
+{% block title %}历史规律 · StudySense{% endblock %}
+{% block main %}
+<div class="notify-bar" id="notifyBar">
+  <span>🔔</span>
+  <span style="flex:1">开启空座提醒后, 你收藏的教室一旦空出座位将弹出浏览器通知</span>
+  <button class="btn primary sm" id="btnNotify">开启提醒</button>
+</div>
+<div class="panel" style="margin-bottom:16px">
+  <div class="trend-toolbar">
+    <h2 style="color:#fff;font-size:17px;flex:1">📅 历史规律 · 什么时候去自习</h2>
+    <select id="trendRoom">
+      <option value="">全馆</option>
+    </select>
+  </div>
+  <div class="golden-grid" id="goldenGrid"></div>
+  <div id="heatChart"></div>
+</div>
+<div class="panel">
+  <h2 style="color:#fff;font-size:17px;margin-bottom:12px">📈 近 7 天日均值趋势</h2>
+  <div id="weekChart"></div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ================= 历史规律 ================= */
+const DOW_CN = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+let heatChart = null, weekChart = null;
+
+async function loadTrends() {
+  const cam = $("#trendRoom").value;
+  // 教室下拉选项（首次填充）
+  if ($("#trendRoom").options.length < 2) {
+    try {
+      const ov = await api("/api/overview");
+      $("#trendRoom").innerHTML = `<option value="">全馆</option>` +
+        ov.rooms.map(r => `<option value="${r.camera_id}">${r.name}</option>`).join("");
+      if (cam) $("#trendRoom").value = cam;
+    } catch { /* 下拉加载失败不阻塞 */ }
+  }
+  let d;
+  try { d = await api(`/api/trends?days=7${cam ? "&camera_id=" + cam : ""}`); }
+  catch (ex) { $("#heatChart").innerHTML = `<div class="empty">加载失败: ${ex.message}</div>`; return; }
+
+  /* ---- 黄金时段 / 高峰时段卡片 ---- */
+  const gEl = $("#goldenGrid");
+  const cards = [];
+  d.golden.forEach((g, i) => cards.push(
+    `<div class="panel kpi gcard gold"><span class="g-rank">${["🥇", "🥈", "🥉"][i] || i + 1}</span>
+      <div class="k-label">黄金时段 · 推荐</div>
+      <div class="g-time">${DOW_CN[g.dow]} ${String(g.hour).padStart(2, "0")}:00–${String(g.hour + 1).padStart(2, "0")}:00</div>
+      <div class="g-free">${(g.free_rate * 100).toFixed(0)}%</div>
+      <div class="g-sub">平均空座率 · ${g.samples} 天样本</div></div>`));
+  d.peak.forEach(g => cards.push(
+    `<div class="panel kpi gcard peak"><span class="g-rank">⚠️</span>
+      <div class="k-label">高峰时段 · 避开</div>
+      <div class="g-time">${DOW_CN[g.dow]} ${String(g.hour).padStart(2, "0")}:00–${String(g.hour + 1).padStart(2, "0")}:00</div>
+      <div class="g-free">${(g.free_rate * 100).toFixed(0)}%</div>
+      <div class="g-sub">平均空座率 · ${g.samples} 天样本</div></div>`));
+  gEl.innerHTML = cards.length ? cards.join("") :
+    `<div class="empty" style="grid-column:1/-1">数据积累中, 至少需要一天的记录后才能给出时段推荐</div>`;
+
+  /* ---- 热力图: 行=日期(近→远), 列=小时 ---- */
+  const dates = d.dates, hm = d.heatmap;
+  const dateLabel = dt => {
+    const o = new Date(dt + "T00:00:00");
+    return `${(o.getMonth() + 1)}/${o.getDate()} ${DOW_CN[o.getDay() === 0 ? 6 : o.getDay() - 1]}`;
+  };
+  const data = [];
+  dates.forEach((dt, yi) => {
+    (hm[dt] || []).forEach((v, xi) => {
+      if (v !== null && v !== undefined) data.push([xi, yi, +(v * 100).toFixed(1)]);
+    });
+  });
+  heatChart = heatChart || echarts.init($("#heatChart"));
+  heatChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: {
+      position: "top",
+      backgroundColor: "#10233f", borderColor: "#1e3a5f", textStyle: { color: "#d6e4ff" },
+      formatter: p => `${dateLabel(dates[p.value[1]])} ${String(p.value[0]).padStart(2, "0")}:00<br/>平均占用率 <b>${p.value[2]}%</b>`,
+    },
+    grid: { left: 76, right: 16, top: 10, bottom: 46 },
+    xAxis: { type: "category", data: Array.from({ length: 24 }, (_, i) => String(i).padStart(2, "0")),
+      axisLabel: { color: "#5a7fb5" }, axisLine: { lineStyle: { color: "#1e3a5f" } }, splitLine: { show: false } },
+    yAxis: { type: "category", data: dates.map(dateLabel), inverse: true,
+      axisLabel: { color: "#7dc5ff" }, axisLine: { lineStyle: { color: "#1e3a5f" } } },
+    visualMap: {
+      min: 0, max: 100, calculable: false, orient: "horizontal", left: "center", bottom: 0,
+      textStyle: { color: "#5a7fb5" },
+      inRange: { color: ["#0a2440", "#0e5f9e", "#ffc107", "#ff5252"] },
+    },
+    series: [{
+      type: "heatmap", data, itemStyle: { borderColor: "#0a182e", borderWidth: 1, borderRadius: 3 },
+      emphasis: { itemStyle: { shadowBlur: 10, shadowColor: "rgba(0,212,255,.6)" } },
+    }],
+  });
+  if (!data.length) heatChart.setOption({ title: { text: "暂无历史数据", left: "center", top: "middle", textStyle: { color: "#5a7fb5", fontSize: 13 } } });
+
+  /* ---- 近 7 天日均值柱状图 ---- */
+  const dayAvg = dates.map(dt => {
+    const arr = (hm[dt] || []).filter(v => v !== null && v !== undefined);
+    return arr.length ? +(arr.reduce((a, b) => a + b, 0) / arr.length * 100).toFixed(1) : null;
+  }).reverse();          // 趋势图从早到晚
+  const dateLabels = dates.map(dateLabel).reverse();
+  weekChart = weekChart || echarts.init($("#weekChart"));
+  weekChart.setOption({
+    backgroundColor: "transparent",
+    tooltip: { backgroundColor: "#10233f", borderColor: "#1e3a5f", textStyle: { color: "#d6e4ff" },
+      formatter: p => `${p.name}<br/>日均占用率 <b>${p.value ?? "--"}%</b>` },
+    grid: { left: 44, right: 16, top: 30, bottom: 30 },
+    xAxis: { type: "category", data: dateLabels, axisLabel: { color: "#5a7fb5" },
+      axisLine: { lineStyle: { color: "#1e3a5f" } } },
+    yAxis: { type: "value", max: 100, axisLabel: { color: "#5a7fb5", formatter: "{value}%" },
+      splitLine: { lineStyle: { color: "#132a4a" } } },
+    series: [{
+      type: "bar", data: dayAvg, barWidth: "46%",
+      itemStyle: { borderRadius: [5, 5, 0, 0], color: new echarts.graphic.LinearGradient(0, 0, 0, 1,
+        [{ offset: 0, color: "#00d4ff" }, { offset: 1, color: "#0a4c86" }]) },
+      emphasis: { itemStyle: { shadowBlur: 14, shadowColor: "rgba(0,212,255,.7)" } },
+      markLine: { silent: true, symbol: ["none", "none"], data: [{ type: "average" }],
+        lineStyle: { color: "rgba(0,230,118,.5)", type: "dashed" },
+        label: { formatter: "均值 {c}%", color: "#5a7fb5" } },
+    }],
+  });
+}
+$("#trendRoom").addEventListener("change", loadTrends);
+loadTrends();
+addEventListener("resize", () => { heatChart && heatChart.resize(); weekChart && weekChart.resize(); });
+
+/* ================= 空座提醒开关（监听器本身在 common.js 全局运行） ================= */
+$("#notifyBar").classList.toggle("on",
+  "Notification" in window && Notification.permission !== "granted");
+$("#btnNotify").addEventListener("click", async () => {
+  if (!("Notification" in window)) { $("#notifyBar").classList.remove("on"); return; }
+  const p = await Notification.requestPermission();
+  if (p === "granted") {
+    $("#notifyBar").classList.remove("on");
+    notifyPush("✅ 空座提醒已开启", `正在监视 ${favs.size} 间收藏教室, 空座出现即通知`);
+  }
+});
+</script>
+{% endblock %}

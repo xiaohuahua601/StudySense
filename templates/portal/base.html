@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}StudySense 管理门户{% endblock %}</title>
+<link rel="icon" type="image/svg+xml" href="/ui/logo.svg">
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<link rel="stylesheet" href="/portal-static/common.css">
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<div class="wrap">
+  <header class="appbar">
+    <div class="logo"><img src="/ui/logo.svg" alt="StudySense" style="height:26px;vertical-align:-7px;margin-right:8px">StudySense 管理门户</div>
+    <div class="spacer"></div>
+    <div class="userchip">
+      <span>👤 <b>{{ user.username }}</b></span>
+      <span class="role-badge {{ user.role }}">{{ "管理员" if user.role == "admin" else "普通用户" }}</span>
+    </div>
+    <button class="btn ghost sm" id="btnLogout">退出登录</button>
+  </header>
+
+  <div class="app-body">
+  <nav class="tabs">
+    <a class="ntab{% if active == 'overview' %} on{% endif %}" href="/portal/overview">📊 占用总览</a>
+    <a class="ntab{% if active == 'trends' %} on{% endif %}" href="/portal/trends">📅 历史规律</a>
+    <a class="ntab{% if active == 'ai' %} on{% endif %}" href="/portal/ai">🤖 AI 助手</a>
+    {% if user.role == 'admin' %}
+    <a class="ntab{% if active == 'rooms' %} on{% endif %}" href="/portal/rooms">🏫 教室管理</a>
+    <a class="ntab{% if active == 'users' %} on{% endif %}" href="/portal/users">👥 用户管理</a>
+    {% endif %}
+  </nav>
+  <div class="main-col">
+    <section class="view">{% block main %}{% endblock %}</section>
+  </div>
+  </div>
+</div>
+
+<!-- 弹窗 -->
+<div id="modalMask">
+  <div class="panel modal" id="modalBody"></div>
+</div>
+
+<script>const ME = {{ user | tojson }};</script>
+<script src="/portal-static/common.js"></script>
+{% block scripts %}{% endblock %}
+</body>
+</html>

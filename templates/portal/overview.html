@@ -1,0 +1,187 @@
+{% extends "portal/base.html" %}
+{% block title %}占用总览 · StudySense{% endblock %}
+{% block main %}
+{% if request.query_params.get('denied') %}
+<div class="denied-bar">🚫 无权限访问管理页面, 已为您跳转到总览</div>
+{% endif %}
+<div class="kpis" id="kpis">
+  <div class="panel kpi k-cyan"><div class="k-label">教室总数</div><div class="k-value" id="kRooms">0</div><div class="k-sub">已注册教室</div></div>
+  <div class="panel kpi k-cyan"><div class="k-label">当前总人数</div><div class="k-value" id="kHeads">0</div><div class="k-sub">实时检测</div></div>
+  <div class="panel kpi k-green"><div class="k-label">占用座位</div><div class="k-value" id="kOcc">0</div><div class="k-sub">实时</div></div>
+  <div class="panel kpi k-amber"><div class="k-label">空闲座位</div><div class="k-value" id="kFree">0</div><div class="k-sub">实时</div></div>
+  <div class="panel kpi k-red"><div class="k-label">总占用率</div><div class="k-value" id="kRate">0%</div><div class="k-sub">占用 / 总座位</div></div>
+</div>
+<div class="toolbar">
+  <input type="text" id="searchBox" placeholder="🔍 搜索教室名称 / 地址">
+  <span class="chip on" data-f="all">全部</span>
+  <span class="chip" data-f="free">宽松</span>
+  <span class="chip" data-f="mid">适中</span>
+  <span class="chip" data-f="busy">紧张</span>
+  <span class="chip" data-f="fav">⭐ 我的收藏</span>
+</div>
+<div id="roomGrid"></div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ================= 占用总览 ================= */
+let roomFilter = "all", roomSearch = "";
+$("#searchBox").addEventListener("input", e => { roomSearch = e.target.value.trim(); renderRooms(); });
+document.querySelectorAll(".chip[data-f]").forEach(c => c.addEventListener("click", () => {
+  document.querySelectorAll(".chip[data-f]").forEach(x => x.classList.toggle("on", x === c));
+  roomFilter = c.dataset.f; renderRooms();
+}));
+
+async function refreshOverview() {
+  let data;
+  try { data = await api("/api/overview"); } catch { return; }
+  const s = data.summary || {};   // 聚合字段嵌套在 summary 里
+  tween($("#kRooms"), s.room_count);
+  tween($("#kHeads"), s.total_heads);
+  tween($("#kOcc"), s.total_occupied);
+  tween($("#kFree"), s.total_seats - s.total_occupied);
+  tween($("#kRate"), +(s.occupancy_rate * 100).toFixed(1), v => v + "%");
+  renderRooms(data.rooms);
+}
+refreshOverview();
+setInterval(refreshOverview, 5000);
+
+function occColor(rate) {
+  return rate >= .7 ? "#ff5252" : rate >= .3 ? "#ffc107" : "#00e676";
+}
+
+function renderRooms(rooms) {
+  rooms = rooms || renderRooms._cache || [];
+  renderRooms._cache = rooms;
+  const grid = $("#roomGrid");
+  let list = rooms;
+  if (roomSearch) list = list.filter(r => r.name.includes(roomSearch) || (r.location || "").includes(roomSearch));
+  if (roomFilter === "free") list = list.filter(r => r.occupancy_rate < .3);
+  if (roomFilter === "mid") list = list.filter(r => r.occupancy_rate >= .3 && r.occupancy_rate < .7);
+  if (roomFilter === "busy") list = list.filter(r => r.occupancy_rate >= .7);
+  if (roomFilter === "fav") list = list.filter(r => favs.has(r.camera_id));
+  if (!list.length) { grid.innerHTML = `<div class="empty">暂无匹配的教室</div>`; return; }
+  grid.innerHTML = list.map(r => {
+    const c = occColor(r.occupancy_rate);
+    const p = (r.occupancy_rate * 100).toFixed(0);
+    const fav = favs.has(r.camera_id);
+    return `<div class="panel rcard" data-cam="${r.camera_id}">
+      <div class="r-head">
+        <span class="r-name">${r.name}</span>
+        <span class="star${fav ? " on" : ""}" data-fav="${r.camera_id}" title="收藏">${fav ? "★" : "☆"}</span>
+      </div>
+      <div class="r-loc">📍 ${r.location || "未设置地址"} · ${r.camera_id}</div>
+      <div class="r-nums"><span class="r-occ" style="color:${c};text-shadow:0 0 14px ${c}66">${r.occupied_count}</span>
+        <span class="r-total">/ ${r.total_seats} 座</span></div>
+      <div class="r-bar"><i style="width:${p}%;background:linear-gradient(90deg,${c}55,${c})"></i></div>
+      <div class="r-foot"><span>占用率 <b style="color:${c}">${p}%</b></span>
+        <span>检测 ${r.head_count} 人</span></div>
+    </div>`;
+  }).join("");
+}
+
+// 收藏 / 详情（事件委托）
+$("#roomGrid").addEventListener("click", e => {
+  const star = e.target.closest(".star");
+  if (star) {
+    const cam = star.dataset.fav;
+    favs.has(cam) ? favs.delete(cam) : favs.add(cam);
+    localStorage.setItem("st_favs", JSON.stringify([...favs]));
+    renderRooms();
+    return;
+  }
+  const card = e.target.closest(".rcard");
+  if (card) showRoomDetail(card.dataset.cam);
+});
+
+/* ---------- 教室详情弹窗（座位点阵 + 24h 趋势） ---------- */
+async function showRoomDetail(cam) {
+  let st = null, room = null;
+  try {
+    const ov = await api("/api/overview");
+    room = ov.rooms.find(r => r.camera_id === cam);
+    const r = await fetch(`/api/stats?camera_id=${cam}`, { credentials: "same-origin" });
+    if (r.ok) st = await r.json();
+  } catch { /* overview 至少能拿到 */ }
+  if (!room) { openModal(`<h3>提示</h3><p style="margin-top:12px;font-size:14px">教室不存在或已被删除</p>
+    <div class="m-foot"><button class="btn sm" onclick="closeModal()">关闭</button></div>`); return; }
+  const occ = st ? st.occupied_count : 0, total = room.total_seats;
+  openModal(`<h3>${room.name} · 实时详情</h3>
+    <div style="font-size:12px;color:#5a7fb5">📍 ${room.location || "未设置地址"} · ${cam}</div>
+    <div style="display:flex;gap:10px;margin-top:16px;flex-wrap:wrap">
+      <div class="panel kpi k-cyan" style="flex:1;min-width:120px"><div class="k-label">占用</div><div class="k-value">${occ}</div></div>
+      <div class="panel kpi k-green" style="flex:1;min-width:120px"><div class="k-label">空余</div><div class="k-value">${total - occ}</div></div>
+      <div class="panel kpi k-amber" style="flex:1;min-width:120px"><div class="k-label">占用率</div><div class="k-value">${total ? (occ / total * 100).toFixed(0) : 0}%</div></div>
+    </div>
+    <label style="margin-top:18px">座位占用示意（按占用数从左至右填充 · 绿=占用 蓝=空闲）</label>
+    <div style="position:relative">
+      <div id="mSeatGrid" style="display:grid;gap:5px;grid-template-columns:repeat(auto-fill,minmax(15px,1fr))"></div>
+      <div id="seatTip" style="position:absolute;pointer-events:none;opacity:0;transition:opacity .15s;
+        background:rgba(12,27,49,.95);border:1px solid #1e4d80;border-radius:6px;
+        padding:4px 10px;font-size:12px;color:#d6ecff;white-space:nowrap;z-index:5"></div>
+    </div>
+    <label style="margin-top:18px">24 小时占用趋势</label>
+    <div id="mTrend" style="height:220px"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="askAIAbout('${room.name}','${cam}')">🤖 问 AI 这间教室</button>
+      <button class="btn sm" onclick="closeModal()">关闭</button>
+    </div>`);
+  // 座位示意（未实现座位映射, 按占用数从左至右填充; 悬停放大+辉光+序号提示）
+  const sg = $("#mSeatGrid");
+  if (total) {
+    sg.innerHTML = Array.from({ length: total }, (_, i) => {
+      const on = i < occ;
+      return `<span class="sc${on ? " sc-on" : ""}" data-i="${i + 1}" data-on="${on ? 1 : 0}" style="aspect-ratio:1"></span>`;
+    }).join("");
+    sg.addEventListener("mousemove", e => {
+      const t = e.target.closest(".sc");
+      const tip = $("#seatTip");
+      if (!t) { tip.style.opacity = 0; return; }
+      tip.textContent = `座位 ${t.dataset.i} · ${t.dataset.on === "1" ? "占用" : "空闲"}`;
+      tip.style.opacity = 1;
+      const r = $("#modalBody").getBoundingClientRect();
+      tip.style.left = (e.clientX - r.left + 14) + "px";
+      tip.style.top = (e.clientY - r.top - 30) + "px";
+    });
+    sg.addEventListener("mouseleave", () => { $("#seatTip").style.opacity = 0; });
+  }
+  // 趋势图（接口返回 {points: [{ts, head_count, occupied_count}]}）
+  api(`/api/history?hours=24&camera_id=${cam}`).then(d => {
+    const pts = d.points || [];
+    if (!pts.length) { $("#mTrend").innerHTML = `<div class="empty">暂无历史数据</div>`; return; }
+    // 数据点过多时降采样至 ~200 个, 避免密集卡顿
+    const step = Math.max(1, Math.ceil(pts.length / 200));
+    const sampled = pts.filter((_, i) => i % step === 0 || i === pts.length - 1);
+    const times = sampled.map(p => p.ts);
+    const occupied = sampled.map(p => p.occupied_count);
+    const heads = sampled.map(p => p.head_count);
+    const ch = echarts.init($("#mTrend"));
+    ch.setOption({
+      backgroundColor: "transparent",
+      tooltip: { trigger: "axis", backgroundColor: "#10233f", borderColor: "#1e3a5f", textStyle: { color: "#d6e4ff" } },
+      grid: { left: 36, right: 14, top: 30, bottom: 24 },
+      xAxis: { type: "category", data: times, axisLabel: { color: "#5a7fb5" }, axisLine: { lineStyle: { color: "#1e3a5f" } } },
+      yAxis: { type: "value", minInterval: 1, axisLabel: { color: "#5a7fb5" }, splitLine: { lineStyle: { color: "#132a4a" } } },
+      series: [
+        { name: "占用座位", type: "line", smooth: true, data: occupied, showSymbol: false,
+          lineStyle: { color: "#00e676", width: 2.5, shadowBlur: 8, shadowColor: "#00e676" },
+          areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: "rgba(0,230,118,.3)" }, { offset: 1, color: "rgba(0,0,0,0)" }] } },
+          markLine: { silent: true, symbol: ["none", "none"], data: [{ type: "average" }],
+            lineStyle: { color: "rgba(0,230,118,.4)", type: "dashed" }, label: { formatter: "均值 {c}", color: "#5a7fb5" } } },
+        { name: "检测人数", type: "line", smooth: true, data: heads, showSymbol: false,
+          lineStyle: { color: "#00d4ff", width: 2.5, shadowBlur: 8, shadowColor: "#00d4ff" },
+          areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [{ offset: 0, color: "rgba(0,212,255,.25)" }, { offset: 1, color: "rgba(0,0,0,0)" }] } } },
+      ],
+    });
+  }).catch(() => { $("#mTrend").innerHTML = `<div class="empty">暂无历史数据</div>`; });
+}
+
+/* 问 AI: 跳转 AI 页并自动提问（SSR 多页间传参走 URL） */
+function askAIAbout(name, cam) {
+  closeModal();
+  location.href = `/portal/ai?q=${encodeURIComponent(name + "现在的空座情况怎么样？人多吗？")}&cam=${cam}`;
+}
+</script>
+{% endblock %}

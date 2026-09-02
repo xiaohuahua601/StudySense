@@ -1,0 +1,97 @@
+{% extends "portal/base.html" %}
+{% block title %}教室管理 · StudySense{% endblock %}
+{% block main %}
+<div class="panel">
+  <div class="tbl-title">
+    <h2>🏫 教室管理</h2>
+    <button class="btn primary sm" id="btnAddRoom">＋ 新增教室</button>
+  </div>
+  <table>
+    <thead><tr><th>摄像头ID</th><th>教室名称</th><th>地址</th><th>座位数</th><th>当前占用</th><th>操作</th></tr></thead>
+    <tbody id="roomTbody"></tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+/* ================= 管理端: 教室管理 ================= */
+function occColor(rate) {
+  return rate >= .7 ? "#ff5252" : rate >= .3 ? "#ffc107" : "#00e676";
+}
+
+async function loadRoomAdmin() {
+  try {
+    const rooms = await api("/api/overview");
+    $("#roomTbody").innerHTML = rooms.rooms.map(r => `<tr>
+      <td style="color:#5a7fb5">${r.camera_id}</td>
+      <td><b style="color:#fff">${r.name}</b></td>
+      <td>${r.location || "--"}</td>
+      <td>${r.total_seats}</td>
+      <td><span style="color:${occColor(r.occupancy_rate)}">${r.occupied_count} (${(r.occupancy_rate * 100).toFixed(0)}%)</span></td>
+      <td style="white-space:nowrap">
+        <button class="btn ghost sm" onclick='roomForm(${JSON.stringify(r).replace(/'/g, "&#39;")})'>编辑</button>
+        <button class="btn danger sm" onclick="delRoom('${r.camera_id}','${r.name}')">删除</button>
+      </td></tr>`).join("") || `<tr><td colspan="6" class="empty">暂无教室</td></tr>`;
+  } catch (ex) {
+    $("#roomTbody").innerHTML = `<tr><td colspan="6" class="empty" style="color:#ff8a80">加载失败: ${ex.message}</td></tr>`;
+  }
+}
+
+$("#btnAddRoom").addEventListener("click", () => roomForm(null));
+
+function roomForm(r) {
+  const isEdit = !!r;
+  openModal(`<h3>${isEdit ? "编辑教室" : "新增教室"}</h3>
+    <label>摄像头 ID${isEdit ? "（不可修改）" : ""}</label>
+    <input id="fCam" value="${r ? r.camera_id : ""}" ${isEdit ? "disabled" : ""} placeholder="如 room_301">
+    <label>教室名称 *</label>
+    <input id="fName" value="${r ? r.name : ""}" placeholder="如 三教301">
+    <label>地址</label>
+    <input id="fLoc" value="${r ? (r.location || "") : ""}" placeholder="如 三教3楼东侧">
+    <label>座位总数 *</label>
+    <input id="fSeats" type="number" min="0" value="${r ? r.total_seats : 60}">
+    <div class="form-err" id="fErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn primary sm" id="fSave">${isEdit ? "保存修改" : "创建教室"}</button>
+    </div>`);
+  $("#fSave").addEventListener("click", async () => {
+    const body = {
+      camera_id: $("#fCam").value.trim(),
+      name: $("#fName").value.trim(),
+      location: $("#fLoc").value.trim(),
+      total_seats: +$("#fSeats").value || 0,
+    };
+    if (!body.camera_id || !body.name) { $("#fErr").textContent = "请填写摄像头 ID 和教室名称"; return; }
+    try {
+      if (isEdit) await api(`/api/rooms/${r.camera_id}`, { method: "PUT", body: JSON.stringify(body) });
+      else await api("/api/rooms", { method: "POST", body: JSON.stringify(body) });
+      closeModal(); loadRoomAdmin();
+    } catch (ex) { $("#fErr").textContent = ex.message; }
+  });
+}
+
+function delRoom(cam, name) {
+  openModal(`<h3>删除教室</h3>
+    <p style="margin-top:12px;font-size:14px">确定删除 <b style="color:#fff">${name}</b>（${cam}）？</p>
+    <label style="display:flex;gap:8px;align-items:center;margin-top:14px;cursor:pointer">
+      <input type="checkbox" id="purge" style="width:auto"> 同时删除该教室全部历史数据（含记录/会话/告警）
+    </label>
+    <p class="del-tip">不勾选则仅移除教室信息, 历史数据保留（重新注册同 ID 教室后数据仍然可见）。</p>
+    <div class="form-err" id="delErr"></div>
+    <div class="m-foot">
+      <button class="btn ghost sm" onclick="closeModal()">取消</button>
+      <button class="btn danger sm" id="delOk">确认删除</button>
+    </div>`);
+  $("#delOk").addEventListener("click", async () => {
+    try {
+      await api(`/api/rooms/${cam}?purge=${$("#purge").checked}`, { method: "DELETE" });
+      closeModal(); loadRoomAdmin();
+    } catch (ex) { $("#delErr").textContent = ex.message; }
+  });
+}
+
+loadRoomAdmin();
+</script>
+{% endblock %}
