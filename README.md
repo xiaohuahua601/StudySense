@@ -4,11 +4,9 @@
 
 系统包含三类前端：**挂墙可视化大屏**（实时监控）、**双角色管理门户**（普通用户：占用总览/收藏/历史规律/空座提醒/AI 问答；管理员：教室与用户管理）、**登录注册页**（访客可看全馆实时统计）。
 
-> 面试/求职读者请配合 [docs/PROJECT_INTRO.md](docs/PROJECT_INTRO.md)（项目详细介绍 + 面试要点指南）阅读。
+> 面试/求职读者请配合 [docs/项目详细介绍与面试要点.md](docs/项目详细介绍与面试要点.md)（项目详细介绍 + 面试要点指南）阅读。
 
 > 本文档面向不熟悉本项目的读者，从零开始解释系统的每个部分是如何实现的，包括模型怎么训练出来、数据怎么流动、每个模块内部的算法逻辑。
->
-> python edge_agent.py --source 0 --camera-id room_201 --interval 5
 
 ---
 
@@ -253,7 +251,7 @@ threshold = np.where(pred_w * ratio < 32, 0.15, 0.35)
 
 **大屏（web/index.html，FastAPI 托管在 `/ui/`）**
 
-布局：顶部 KPI 行（教室数/总人数/占用座位/总占用率）→ 教室卡片墙（点击联动右侧详情）→ 详情区（人数/空位/占用率 + 24h 趋势曲线 + 时长统计）→ 右侧 AI 问答抽屉。
+布局：顶部 KPI 行（教室数/总人数/占用座位/总占用率）→ 教室卡片墙（点击联动右侧详情）→ 详情区（人数/空位/占用率 + 24h 趋势曲线 + 时长统计 + 座位点阵）+ 底部摄像头告警条。
 
 **实时感设计**（监控页的核心体验，数据 5 秒轮询 + 三层视觉反馈）：
 
@@ -267,13 +265,13 @@ threshold = np.where(pred_w * ratio < 32, 0.15, 0.35)
 
 - **登录页**：左右分栏——左侧品牌区（Logo + 特性卡 + **未登录可见的实时统计**：教室数/座位数/当前空座），右侧登录/注册滑块切换
 - **占用总览**（所有角色）：教室卡片（进度条流光 + 悬停 3D 倾斜 + 点击涟漪）、搜索 + 占用状态筛选（宽松/适中/紧张）、⭐收藏（localStorage 持久化，可只看收藏）、座位变化提示
-- **教室详情弹窗**：座位示意点阵（按占用数从左至右填充，绿=占用/蓝=空闲，悬停放大辉光 + 跟随提示）+ 24h 趋势双曲线（占用/人数 + 均值线，超 200 点降采样）
+- **教室详情弹窗**：座位示意点阵（按占用数从左至右填充，绿=占用/蓝=空闲，悬停放大辉光、无文字提示）+ 24h 趋势双曲线（占用/人数 + 均值线，超 200 点降采样）
 - **历史规律页签**（"什么时候去自习"决策）：
   - 黄金时段 Top3 卡片（如"周一 16:00–17:00 空座率 88%"）+ 高峰"避开"时段卡片
   - 7 天 × 24 小时占用率热力图（ECharts heatmap，深蓝→红渐变，悬停数值）
   - 近 7 天日均值柱状图（渐变柱 + 均值虚线）；教室筛选（全馆/单教室）
 - **空座提醒**：授权浏览器 Notification 后，每 15 秒检查收藏教室，空座从 <3 翻转为 ≥3 时弹系统通知（5 分钟冷却）
-- **AI 助手**：聊天气泡 + 打字动画 + 快捷提问芯片（含"一周哪些时段最空""明天几点去最空"），可展开 SQL
+- **AI 助手**：聊天气泡 + 打字动画 + 快捷提问芯片（含"一周哪些时段最空""明天几点去最空"）；回答只给结论不展示 SQL 语句（后端调试接口保留 sql 字段）。AI 问答仅存在于管理门户，大屏不做问答
 - **管理员专属**：教室管理（新增/编辑/删除，可选级联清历史数据）、用户管理（新增/升降管理员/重置密码/删除，自我保护：不能删自己）
 
 **为什么弃用 Streamlit 与纯前端 SPA**：早期管理页用 Streamlit 开发效率高，但无法与大屏保持统一视觉风格且镜像臃肿（~900MB）；中期改为原生 JS 单页应用（风格统一、零构建），但 token 存 localStorage 有 XSS 风险、权限判定全在浏览器端。最终改为 **Jinja2 SSR 多页应用**：安全（服务端权限判定 + HttpOnly Cookie + CSRF 双保险 + CSP 等安全响应头 + 登录防爆破）、体验不打折（同一套 CSS/动效），还省掉一个独立容器。
@@ -531,26 +529,61 @@ python edge_agent.py --source media/test_room.mp4 --camera-id room_201 --interva
 
 ## 九、项目结构
 
+> 逐文件说明用途。深入理解每个文件的实现逻辑请看 [docs/项目详细介绍与面试要点.md](docs/项目详细介绍与面试要点.md)。
+
 ```
 face_test/
-├── server.py               # FastAPI 后端: 接口 + 自动建库建表 + Text2SQL + 认证/权限
-├── edge_agent.py            # 边缘采集端: 取流→检测→跟踪→异常守卫→周期上报
-├── head_detector.py         # 人头检测器: letterbox/ONNX 推理/分级阈值/NMS
-├── tracker.py               # IOU+质心跟踪器: 轨迹确认/老化/会话归档
-├── camera_guard.py          # 摄像头异常守卫: 遮挡/移动检测
-├── web/index.html           # 可视化大屏（单文件, ECharts CDN）
-├── web/portal_static/       # 管理门户公共静态资源（CSS/JS）
-├── web/logo.svg             # 全站 Logo + favicon
-├── templates/portal/        # 管理门户 SSR 模板（登录/总览/历史/AI/教室/用户 6 页）
-├── dashboard/               # 大屏独立部署容器（nginx + gen-config.sh）
-├── models/                  # ONNX 检测模型（head_detect_1280 默认 / 960 速度折中 / face_detect 备用）
-├── media/                   # 测试视频（test_room.mp4）
-├── scripts/                 # 训练辅助脚本（convert_crowdhuman.py: odgt→YOLO 转换）
-├── docs/                    # 文档（PROJECT_INTRO.md 介绍与面试要点 / 历史交接文档）
-├── docker-compose.yml       # 一键编排: API(含门户SSR) + MySQL + Ollama + 大屏
-├── Dockerfile               # API 服务镜像（FastAPI + Jinja2 模板）
-├── .env.example             # 环境变量模板（复制为 .env 填密码/模型/密钥）
-└── README.md                # 需求与技术文档（本文档）
+├── server.py                    # 【后端中枢·单文件】全部 REST API + 启动自动建库建表/旧表迁移
+│                                #   + Text2SQL 链路(安全校验/自愈重试) + 用户认证(PBKDF2/HMAC Token)
+│                                #   + Jinja2 SSR 门户路由 + 安全中间件(CSP/CSRF/防爆破/CORS)
+├── edge_agent.py                # 【边缘采集端】教室电脑常驻进程: 取流(摄像头/视频/图片)→检测→跟踪
+│                                #   →异常守卫→每 interval 秒 POST 上报(只传数字); 退出时归档在场会话
+├── head_detector.py             # 【人头检测器】letterbox 预处理 + ONNX(DirectML GPU)推理
+│                                #   + 分级置信度阈值 + NMS; 默认加载 models/head_detect_1280.onnx
+├── tracker.py                   # 【跟踪器】纯 NumPy IOU+质心跟踪: 轨迹确认(min_hits=3)/老化(max_age=12)/会话归档
+├── camera_guard.py              # 【异常守卫】零模型判定镜头遮挡(亮度+纹理+人数三信号)与移动(帧差分)
+│
+├── web/                         # ── 前端静态资源 ──
+│   ├── index.html               # 可视化大屏(单文件 52KB, ECharts CDN): KPI/卡片墙/座位点阵/趋势/告警
+│   │                            #   开头加载 config.js 读 window.__API_BASE__ → 大屏可独立部署的关键
+│   ├── logo.svg                 # 全站 Logo + favicon
+│   └── portal_static/           # 管理门户公共资源(6 个门户页共用)
+│       ├── common.css           # 统一深色科技风样式(卡片/表单/弹窗/动效/粒子背景)
+│       └── common.js            # $ 选择器 / api() 带凭证请求封装 / 粒子+鼠标交互(避让/连线) / toast
+│
+├── templates/portal/            # ── 管理门户 SSR 模板(Jinja2, FastAPI 同源渲染) ──
+│   ├── base.html                # 布局母版: 左侧导航+顶栏, 按角色控制导航可见性, 引入公共资源
+│   ├── login.html               # 登录/注册页: 品牌区(未登录可见实时统计) + 表单滑块切换
+│   ├── overview.html            # 占用总览(所有角色): 卡片墙/搜索筛选/⭐收藏/教室详情弹窗(座位点阵+24h趋势)
+│   ├── trends.html              # 历史规律(普通用户专属): 黄金/高峰时段卡片 + 7天×24h热力图 + 日均值柱
+│   ├── ai.html                  # AI 助手: 聊天气泡+打字动画+快捷提问芯片
+│   ├── rooms.html               # 教室管理(管理员): 增删改, 删除可选级联清历史数据
+│   └── users.html               # 用户管理(管理员): 新增/升降管理员/重置密码/删除(含自我保护)
+│
+├── dashboard/                   # ── 大屏独立部署容器(nginx:alpine, 宿主机 8080) ──
+│   ├── Dockerfile               # 只 COPY 大屏两个文件, 镜像 ~10MB
+│   └── gen-config.sh            # nginx 启动钩子: 按环境变量 API_BASE 生成 config.js(运行时配置注入)
+│
+├── models/                      # ── ONNX 检测模型(不进 git) ──
+│   ├── head_detect_1280.onnx    # 人头检测·精度优先(部署默认, mAP50=0.842)
+│   ├── head_detect_960.onnx     # 人头检测·速度折中(单帧 11.9ms)
+│   └── face_detect*.onnx ×2    # 早期人脸检测模型(留档: 立项时验证俯拍人脸失效的依据)
+│
+├── media/                       # ── 测试素材(不进 git) ──
+│   └── test_room.mp4            # 40 人真实自习室俯拍视频(全链路验证)
+│
+├── scripts/                     # ── 训练辅助 ──
+│   └── convert_crowdhuman.py    # CrowdHuman odgt→YOLO 转换(含脏标注过滤+质量校验)
+│
+├── docs/                        # ── 文档 ──
+│   ├── 项目详细介绍与面试要点.md          # 项目详细介绍+面试要点(深入理解实现用)
+│   └── 人头检测模型训练交接文档.md        # 检测模型训练阶段交接文档
+│
+├── docker-compose.yml           # 编排 4 服务: api(8000,含门户SSR) / mysql(3307) / ollama / dashboard(8080)
+├── Dockerfile                   # api 镜像: python-slim + FastAPI, 只 COPY server/web/templates
+├── .env.example                 # 环境变量模板: MYSQL_PASSWORD/OLLAMA_MODEL/TOKEN_SECRET/CORS_ORIGINS/DASHBOARD_API_BASE
+├── .gitignore                   # 忽略模型权重/视频/日志/.env/运行产物
+└── README.md                    # 需求与技术文档(本文档)
 ```
 
 ---
