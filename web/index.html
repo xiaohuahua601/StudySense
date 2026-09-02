@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>自习室监控中心</title>
 <link rel="icon" type="image/svg+xml" href="logo.svg">
+<script src="config.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -164,57 +165,6 @@
 
   footer { margin-top: 18px; text-align: center; font-size: 12px; color: #3d5f8f; }
 
-  /* ===== AI 问答助手（右侧抽屉） ===== */
-  #chatToggle {
-    position: fixed; right: 0; top: 42%; z-index: 60;
-    writing-mode: vertical-rl; letter-spacing: 4px;
-    background: linear-gradient(180deg, #0e2038, #14315a); color: #7dc5ff;
-    border: 1px solid #1e3a5f; border-right: none; border-radius: 10px 0 0 10px;
-    padding: 18px 8px; font-size: 13px; cursor: pointer; user-select: none;
-    transition: all .25s;
-  }
-  #chatToggle:hover { color: #fff; background: linear-gradient(180deg, #14315a, #1a4070); }
-
-  #chatPanel {
-    position: fixed; right: -420px; top: 0; bottom: 0; width: 400px; z-index: 70;
-    background: rgba(8, 18, 34, .97); border-left: 1px solid #1e3a5f;
-    display: flex; flex-direction: column; transition: right .35s;
-  }
-  #chatPanel.open { right: 0; }
-  .chat-head {
-    padding: 14px 18px; border-bottom: 1px solid #1e3a5f;
-    display: flex; justify-content: space-between; align-items: center;
-  }
-  .chat-head h3 { margin: 0; font-size: 15px; color: #fff; }
-  .chat-head h3 span { font-size: 11px; color: #5a7fb5; font-weight: 400; margin-left: 8px; }
-  .chat-close { background: none; border: none; color: #5a7fb5; font-size: 20px; cursor: pointer; }
-  .chat-close:hover { color: #fff; }
-
-  #chatMsgs { flex: 1; overflow-y: auto; padding: 16px; display: flex; flex-direction: column; gap: 12px; }
-  #chatMsgs::-webkit-scrollbar { width: 6px; }
-  #chatMsgs::-webkit-scrollbar-thumb { background: #1e3a5f; border-radius: 3px; }
-
-  .msg { max-width: 92%; padding: 10px 12px; border-radius: 10px; font-size: 13px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
-  .msg.user { align-self: flex-end; background: #14315a; color: #d6ecff; border: 1px solid #1e4d80; }
-  .msg.bot { align-self: flex-start; background: #0e2038; color: #c8dff5; border: 1px solid #1e3a5f; }
-  .msg.bot .sql-toggle { display: inline-block; margin-top: 6px; font-size: 11px; color: #5a7fb5; cursor: pointer; text-decoration: underline dotted; }
-  .msg.bot pre { margin: 6px 0 0; background: #081222; border: 1px solid #16304f; border-radius: 6px; padding: 8px; font-size: 11px; color: #69f0ae; overflow-x: auto; white-space: pre; }
-  .msg.err { border-color: #ff5252; color: #ff8a80; }
-
-  .chat-input { display: flex; gap: 8px; padding: 12px; border-top: 1px solid #1e3a5f; }
-  .chat-input input {
-    flex: 1; background: #0e2038; border: 1px solid #1e3a5f; border-radius: 8px;
-    color: #d6ecff; padding: 10px 12px; font-size: 13px; outline: none;
-  }
-  .chat-input input:focus { border-color: #40c4ff; }
-  .chat-input button {
-    background: linear-gradient(135deg, #14315a, #1a4070); color: #7dc5ff;
-    border: 1px solid #1e4d80; border-radius: 8px; padding: 0 16px;
-    font-size: 13px; cursor: pointer;
-  }
-  .chat-input button:hover { color: #fff; }
-  .chat-input button:disabled { opacity: .5; cursor: not-allowed; }
-
   /* ===== 实时感: 变化闪烁 / 涨跌角标 / 心跳条 ===== */
   @keyframes valFlash {
     0% { text-shadow: 0 0 18px #40c4ff; color: #fff; transform: scale(1.15); }
@@ -232,6 +182,25 @@
            font-size: 11px; font-weight: 600; vertical-align: middle; }
   .delta.up { background: rgba(255,171,64,.15); color: #ffb74d; border: 1px solid #ff9800; }
   .delta.down { background: rgba(77,208,225,.12); color: #4dd0e1; border: 1px solid #26c6da; }
+
+  /* KPI 涨跌浮标: 数值变化时卡片右上角浮出 ↑/↓ 徽标, 悬停数秒后上浮淡出 */
+  .kpi, .count-card { position: relative; }
+  .delta-badge {
+    position: absolute; top: 10px; right: 12px; z-index: 3;
+    font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums;
+    padding: 2px 8px; border-radius: 10px; pointer-events: none;
+    animation: deltaPop 4s ease forwards;
+  }
+  .delta-badge.up { color: #ffb74d; background: rgba(255,183,77,.10); border: 1px solid rgba(255,183,77,.45);
+    text-shadow: 0 0 8px rgba(255,183,77,.6); }
+  .delta-badge.down { color: #4dd0e1; background: rgba(77,208,225,.10); border: 1px solid rgba(77,208,225,.45);
+    text-shadow: 0 0 8px rgba(77,208,225,.6); }
+  @keyframes deltaPop {
+    0% { opacity: 0; transform: translate(10px, -8px) scale(.5); }
+    10% { opacity: 1; transform: translate(0, 0) scale(1); }
+    75% { opacity: 1; transform: translateY(0); }
+    100% { opacity: 0; transform: translateY(-10px); }
+  }
 
   /* 顶栏刷新心跳条: 5s 一个周期 */
   #heartbeat { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; }
@@ -292,12 +261,21 @@
     aspect-ratio: 1; border-radius: 4px;
     background: rgba(64,196,255,.18);
     border: 1px solid rgba(64,196,255,.35);
-    transition: background .4s, box-shadow .4s, border-color .4s;
+    transition: transform .18s cubic-bezier(.3,1.4,.4,1), background .4s, box-shadow .4s, border-color .4s;
   }
   .seat.on {
     background: rgba(0,230,118,.75);
     border-color: #00e676;
     box-shadow: 0 0 6px rgba(0,230,118,.45);
+  }
+  .seat:hover {
+    transform: scale(1.45); z-index: 2;
+    background: rgba(0,212,255,.55); border-color: #00d4ff;
+    box-shadow: 0 0 12px rgba(0,212,255,.8);
+  }
+  .seat.on:hover {
+    background: #00e676; border-color: #7df9ff;
+    box-shadow: 0 0 14px rgba(0,230,118,.95);
   }
   @keyframes seatPop {
     0% { transform: scale(.3); box-shadow: 0 0 14px #00e676; }
@@ -306,24 +284,6 @@
   .seat.just-on { animation: seatPop .5s cubic-bezier(.2,1.4,.4,1); }
   @keyframes seatOff { 0% { box-shadow: 0 0 12px #40c4ff; } 100% { box-shadow: none; } }
   .seat.just-off { animation: seatOff .6s ease-out; }
-
-  /* 右下角实时事件 toast */
-  #toasts { position: fixed; right: 18px; bottom: 18px; z-index: 80; display: flex; flex-direction: column; gap: 8px; }
-  .toast {
-    display: flex; align-items: center; gap: 8px;
-    background: rgba(12, 27, 49, .95); border: 1px solid #1e4d80;
-    border-left: 3px solid #00d4ff; border-radius: 8px;
-    padding: 9px 14px; font-size: 13px; color: #d6ecff;
-    box-shadow: 0 6px 24px rgba(0,0,0,.45);
-    animation: toastIn .35s cubic-bezier(.2,1.2,.4,1) both;
-    max-width: 320px;
-  }
-  .toast.out { animation: toastOut .4s ease both; }
-  .toast .t-icon { font-size: 15px; }
-  .toast.up { border-left-color: #ffb74d; }
-  .toast.down { border-left-color: #4dd0e1; }
-  @keyframes toastIn { from { opacity: 0; transform: translateX(60px); } to { opacity: 1; transform: none; } }
-  @keyframes toastOut { to { opacity: 0; transform: translateX(60px); } }
 
   /* KPI 聚光灯（随鼠标位置） */
   .kpi::before {
@@ -364,23 +324,6 @@
 <body>
 
 <canvas id="bg"></canvas>
-<div id="toasts"></div>
-
-<!-- AI 问答助手（右侧抽屉） -->
-<div id="chatToggle">AI 问答助手</div>
-<div id="chatPanel">
-  <div class="chat-head">
-    <h3>💬 数据问答助手<span>Text2SQL · 本地大模型</span></h3>
-    <button class="chat-close" id="chatClose">×</button>
-  </div>
-  <div id="chatMsgs">
-    <div class="msg bot">你好, 我可以查询自习室数据。试试问:<br>· 今天几点人最少?<br>· 哪个教室累计在座时间最长?<br>· 最近有哪些摄像头告警?</div>
-  </div>
-  <div class="chat-input">
-    <input id="chatInput" type="text" placeholder="输入问题, 回车发送..." maxlength="200">
-    <button id="chatSend">发送</button>
-  </div>
-</div>
 
 <header>
   <div class="title"><img src="logo.svg" alt="StudySense" style="height:30px;vertical-align:-8px;margin-right:8px"><span class="live-dot"></span>自习室监控中心</div>
@@ -482,7 +425,8 @@
 <footer>数据每 5 秒自动刷新 · 数据源 /api/overview · /api/daily · /api/duration</footer>
 
 <script>
-const API = "";
+// API 基址: 独立部署的仪表盘容器通过 config.js 注入 window.__API_BASE__; 同源部署时为空
+const API = window.__API_BASE__ || "";
 let selectedCam = null;
 let trendChart = null;
 let globalChart = null, gaugeChart = null, rankChart = null, dailyChart = null;
@@ -629,6 +573,21 @@ function tween(el, to, fmt = v => v) {
   el._raf = requestAnimationFrame(step);
 }
 
+/* KPI 涨跌浮标: 数值变化时卡片右上角浮出 ↑/↓ 徽标（涨=琥珀 跌=青色）, 4 秒后上浮淡出 */
+function showDelta(id, delta, fmt) {
+  if (!delta) return;
+  const el = document.getElementById(id);
+  const card = el && el.closest(".kpi, .count-card");
+  if (!card) return;
+  card.querySelectorAll(".delta-badge").forEach(b => b.remove());
+  const b = document.createElement("span");
+  b.className = "delta-badge " + (delta > 0 ? "up" : "down");
+  const v = fmt ? fmt(Math.abs(delta)) : Math.abs(delta);
+  b.textContent = (delta > 0 ? "↑" : "↓") + v;
+  card.appendChild(b);
+  b.addEventListener("animationend", () => b.remove());
+}
+
 /* ---------- 摄像头异常告警 ---------- */
 async function refreshAlerts() {
   const bar = document.getElementById("alertBar");
@@ -668,23 +627,6 @@ function deltaBadge(d) {
   if (d > 0) return `<span class="delta up">▲ +${d}</span>`;
   if (d < 0) return `<span class="delta down">▼ ${d}</span>`;
   return "";
-}
-
-/* ---------- 右下角实时事件 toast ---------- */
-function toast(icon, text, type = "") {
-  const box = document.getElementById("toasts");
-  if (!box) return;
-  while (box.children.length >= 4) box.firstChild.remove();   // 最多同屏 4 条
-  const t = document.createElement("div");
-  t.className = "toast " + type;
-  const now = new Date().toLocaleTimeString("zh-CN", { hour12: false });
-  t.innerHTML = `<span class="t-icon">${icon}</span><span>${text}</span>
-                <span style="color:#5a7fb5;font-size:11px;margin-left:auto;">${now}</span>`;
-  box.appendChild(t);
-  setTimeout(() => {
-    t.classList.add("out");
-    t.addEventListener("animationend", () => t.remove());
-  }, 4200);
 }
 
 /* ---------- 顶部滚动跑马灯 ---------- */
@@ -918,6 +860,13 @@ async function refreshOverview() {
   flashIf("kpiRooms", s.room_count);
   flashIf("kpiHeads", s.total_heads);
   flashIf("kpiOcc", s.total_occupied);
+  // 涨跌浮标（首轮 prevSnap 为空不显示; 占用率保留 1 位小数）
+  if (prevSnap) {
+    showDelta("kpiHeads", s.total_heads - prevSnap.heads);
+    showDelta("kpiOcc", s.total_occupied - prevSnap.occ);
+    showDelta("kpiRate", Math.round((s.occupancy_rate - prevSnap.rate) * 1000) / 10,
+              v => (v % 1 ? v.toFixed(1) : v));
+  }
 
   // 全局实时序列追加
   const now = new Date();
@@ -933,19 +882,6 @@ async function refreshOverview() {
   if (selectedCam) {
     const rm = data.rooms.find(r => r.camera_id === selectedCam);
     if (rm) renderSeats(rm.occupied_count, rm.total_seats);
-  }
-
-  // 实时事件通知: 教室人数变化即弹 toast（每轮最多 3 条, 避免刷屏）
-  if (prevSnap) {
-    let shown = 0;
-    for (const room of data.rooms) {
-      const d = room.head_count - (prevSnap.rooms[room.camera_id] ?? room.head_count);
-      if (d !== 0 && shown < 3) {
-        toast(d > 0 ? "📈" : "📉", `${room.name} 人数${d > 0 ? "增加" : "减少"} ${Math.abs(d)} 人`,
-              d > 0 ? "up" : "down");
-        shown++;
-      }
-    }
   }
 
   const grid = document.getElementById("roomGrid");
@@ -1027,17 +963,21 @@ async function selectRoom(cameraId) {
       const st = await r.json();
       selectedSeats = st.total_seats || 0;
       const free = Math.max(st.total_seats - st.occupied_count, 0);
-      // 变化闪烁: 与上次值比较
+      // 变化闪烁 + 涨跌浮标: 与上次值比较
       const flashIf = (id, val) => {
         const el = document.getElementById(id);
-        const changed = el.dataset.prev !== undefined && el.dataset.prev !== String(val);
+        const prev = el.dataset.prev;
+        const changed = prev !== undefined && prev !== String(val);
         el.textContent = val;
         el.dataset.prev = val;
         el.classList.remove("flash");
         if (changed) { void el.offsetWidth; el.classList.add("flash"); }
+        return changed ? prev : undefined;    // 有变化时返回旧值供涨跌计算
       };
-      flashIf("ccPeople", st.head_count);
-      flashIf("ccFree", free);
+      const pPeople = flashIf("ccPeople", st.head_count);
+      const pFree = flashIf("ccFree", free);
+      if (pPeople !== undefined) showDelta("ccPeople", st.head_count - Number(pPeople));
+      if (pFree !== undefined) showDelta("ccFree", free - Number(pFree));
       flashIf("ccRate", (st.occupancy_rate * 100).toFixed(1) + "%");
       document.getElementById("ccFreeSub").textContent = `${st.occupied_count} / ${st.total_seats} 座`;
       renderSeats(st.occupied_count, st.total_seats);
@@ -1247,79 +1187,6 @@ setInterval(refreshDaily, 60000);   // 每分钟重取分时统计
 
 /* 所有图表自适应窗口 */
 window.addEventListener("resize", () => charts.forEach(c => c && c.resize()));
-
-/* ---------- AI 问答助手（Text2SQL + Ollama） ---------- */
-const chatPanel = document.getElementById("chatPanel");
-const chatMsgs = document.getElementById("chatMsgs");
-const chatInput = document.getElementById("chatInput");
-const chatSend = document.getElementById("chatSend");
-
-document.getElementById("chatToggle").onclick = () =>
-  chatPanel.classList.add("open");
-document.getElementById("chatClose").onclick = () =>
-  chatPanel.classList.remove("open");
-
-function appendMsg(cls, text, sql) {
-  const div = document.createElement("div");
-  div.className = "msg " + cls;
-  div.textContent = text;
-  if (sql) {
-    const t = document.createElement("span");
-    t.className = "sql-toggle";
-    t.textContent = "查看SQL";
-    t.onclick = () => {
-      const pre = div.querySelector("pre");
-      if (pre) { pre.remove(); t.textContent = "查看SQL"; }
-      else {
-        const p = document.createElement("pre");
-        p.textContent = sql;
-        div.appendChild(p);
-        t.textContent = "收起SQL";
-      }
-    };
-    div.appendChild(t);
-  }
-  chatMsgs.appendChild(div);
-  chatMsgs.scrollTop = chatMsgs.scrollHeight;
-  return div;
-}
-
-async function sendChat() {
-  const q = chatInput.value.trim();
-  if (!q) return;
-  chatInput.value = "";
-  appendMsg("user", q);
-  chatSend.disabled = true;
-
-  const thinking = appendMsg("bot", "AI 查询中, 约 5~20 秒...");
-  try {
-    // 若当前在教室详情页, 自动限定该教室
-    const cam = selectedCam || null;
-    const r = await fetch(`${API}/api/ask`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question: q, camera_id: cam }),
-    });
-    const d = await r.json();
-    thinking.remove();
-    if (r.ok) {
-      appendMsg("bot", d.answer, d.sql);
-    } else {
-      appendMsg("bot err", d.detail || `查询失败(${r.status_code})`);
-    }
-  } catch (e) {
-    thinking.remove();
-    appendMsg("bot err", "请求失败: " + e.message);
-  } finally {
-    chatSend.disabled = false;
-    chatInput.focus();
-  }
-}
-
-chatSend.onclick = sendChat;
-chatInput.addEventListener("keydown", e => {
-  if (e.key === "Enter") sendChat();
-});
 
 refreshOverview();
 refreshAlerts();

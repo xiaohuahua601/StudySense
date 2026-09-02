@@ -27,11 +27,12 @@ from typing import Optional
 
 import pymysql
 from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.security.utils import get_authorization_scheme_param
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 # ---------- 配置 ----------
 DB_CONFIG = {
@@ -44,6 +45,18 @@ DB_CONFIG = {
 }
 
 app = FastAPI(title="自习室座位监测系统", version="0.1.0")
+
+# ---------- CORS 跨域白名单（仪表盘独立部署时用） ----------
+# 环境变量 CORS_ORIGINS: 逗号分隔的来源白名单, 如 "http://localhost:8080,http://192.168.1.50:8080"
+# 默认为空 = 不开启跨域（门户 SSR 同源部署不受影响）; 大屏页面无需登录, 不携带 cookie
+_origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
+if _origins:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=_origins,
+        allow_methods=["GET", "POST"],
+        allow_headers=["Content-Type", "Authorization", "X-Requested-With"],
+    )
 
 # 门户 SSR 与 API 同源部署(8000), 不再需要 CORS 跨域; 统一注入安全响应头
 @app.middleware("http")
@@ -231,6 +244,14 @@ class Room(BaseModel):
     total_seats: int
     location: str = ""
     created_at: Optional[datetime] = None
+
+    @field_validator("created_at", mode="before")
+    @classmethod
+    def _zero_date_to_none(cls, v):
+        """MySQL 零值日期('0000-00-00')无法被解析为 datetime, 兜底转为 None"""
+        if isinstance(v, str) and v.startswith("0000-00-00"):
+            return None
+        return v
 
 
 class Report(BaseModel):
@@ -591,20 +612,25 @@ def trends(days: int = 7, camera_id: Optional[str] = None):
         d = r["d"]
         dow = d.weekday() if hasattr(d, "weekday") else 0
         by_dow_hour.setdefault((dow, r["h"]), []).append(float(r["avg_rate"] or 0))
-    golden = []
+    slots = []
     for (dow, h), vals in by_dow_hour.items():
         if len(vals) >= max(1, days // 7):   # 至少出现过一天的样本
-            golden.append({"dow": dow, "hour": h,
-                           "free_rate": round(1 - sum(vals) / len(vals), 4),
-                           "samples": len(vals)})
-    golden.sort(key=lambda x: -x["free_rate"])
+            slots.append({"dow": dow, "hour": h,
+                          "free_rate": round(1 - sum(vals) / len(vals), 4),
+                          "samples": len(vals)})
+    slots.sort(key=lambda x: -x["free_rate"])
+    golden = slots[:3]                        # 空座率最高 Top3 = 推荐
+    # 高峰时段从剩余时段里挑最挤的, 与黄金时段互斥, 避免"既推荐又避开"
+    golden_keys = {(g["dow"], g["hour"]) for g in golden}
+    peak = sorted((s for s in slots if (s["dow"], s["hour"]) not in golden_keys),
+                  key=lambda x: x["free_rate"])[:3]
     return {
         "days": days,
         "camera_id": camera_id,
         "dates": [d.strftime("%Y-%m-%d") for d in date_list],
         "heatmap": hm,
-        "golden": golden[:3],
-        "peak": sorted(golden, key=lambda x: x["free_rate"])[:3],   # 最挤时段(反面)
+        "golden": golden,
+        "peak": peak,
     }
 
 
@@ -692,7 +718,11 @@ _SCHEMA_DESC = """数据库 study_room, 表:
 历史规律问题提示: "过去一周哪天/哪个时段人最多(最少)" 可用 SQL 查询, 如:
 SELECT DAYOFWEEK(ts) AS dow, HOUR(ts) AS h, AVG(head_count) AS avg_heads
 FROM records WHERE ts >= NOW() - INTERVAL 7 DAY GROUP BY dow, h ORDER BY avg_heads DESC;
-"明天/今天什么时间去最空" 同理取 avg 值最低的时段。
+"明天/今天什么时间去最空/最容易找到空座" 同理取 avg 最低的时段, 直接套用:
+SELECT HOUR(ts) AS hour, AVG(head_count) AS avg_heads
+FROM records WHERE ts >= NOW() - INTERVAL 7 DAY
+GROUP BY HOUR(ts) ORDER BY avg_heads ASC LIMIT 3;
+注意: 只能用 HOUR(ts)/DAYOFWEEK(ts) 等函数提取时间, 不存在名为 DATE 的列。
 
 参考示例（各教室当前空座数, 按空座降序）:
 SELECT r.camera_id, r.name, r.total_seats - t.occupied_count AS free_seats
@@ -702,7 +732,10 @@ FROM rooms r JOIN (
 ) t ON t.camera_id = r.camera_id
 ORDER BY free_seats DESC;
 
-重要: rooms 表没有 occupied_count/head_count 列, 任何人数类数据必须 JOIN records 表获得。"""
+重要: rooms 表没有 occupied_count/head_count 列, 写 r.occupied_count 或 r.head_count 会直接报错
+(Unknown column)! 人数/占用类数据必须 JOIN records 表获得。
+涉及教室的查询, SELECT 中必须包含 r.name(教室中文名称)和 r.location(地址)列, 便于面向用户展示。
+问"明天/将来"的问题时没有未来数据, 一律用历史数据按星期×小时聚合平均来推测。"""
 
 
 def _ollama_chat(prompt: str, system: str = "", timeout: int = 120) -> str:
@@ -770,7 +803,7 @@ def ask(data: AskIn):
     if sql is None:
         raise HTTPException(400, f"生成的 SQL 不安全或非查询语句: {raw_sql!r}")
 
-    # ---- 2) 执行（只读, 限 50 行）; 失败时带错误回喂 LLM 重生成（最多 3 次） ----
+    # ---- 2) 执行（只读, 限 50 行）; 失败时带错误+schema 回喂 LLM 重生成（最多重试 2 次） ----
     rows = None
     for attempt in range(3):
         db = get_db()
@@ -780,11 +813,12 @@ def ask(data: AskIn):
                 rows = cur.fetchall()
             break
         except pymysql.MySQLError as e:
-            if attempt == 1:
-                raise HTTPException(400, f"SQL 执行失败: {e}\nSQL: {sql}")
+            if attempt == 2:
+                raise HTTPException(400, f"SQL 执行失败: {e}")
             retry_prompt = (
                 f"你之前生成的SQL执行报错。\nSQL: {sql}\n"
-                f"MySQL错误: {e}\n用户问题: {data.question}\n"
+                f"MySQL错误: {e}\n用户问题: {data.question}\n\n"
+                f"数据库结构如下, 请对照检查列名后再修正:\n{_SCHEMA_DESC}\n"
                 f"请修正后只输出一条正确的 SELECT 语句:")
             try:
                 fixed = _ollama_chat(retry_prompt, sql_system)
@@ -799,7 +833,12 @@ def ask(data: AskIn):
     # ---- 3) LLM 组织自然语言答案 ----
     rows_text = json.dumps(rows, ensure_ascii=False, default=str)
     ans_system = ("你是自习室管理助手, 用简洁中文回答, 基于数据不要编造。"
-                  "duration_sec 等时长字段单位是秒, 回答时换算成分钟或小时（如 13500秒→225分钟→3小时45分）。")
+                  "duration_sec 等时长字段单位是秒, 回答时换算成分钟或小时（如 13500秒→225分钟→3小时45分）。"
+                  "提到教室时必须用教室中文名称(name 列, 如 图书馆B1/三教201), "
+                  "禁止在答案中出现 camera_id、room_201 这类英文内部标识。"
+                  "推荐或介绍教室时格式为'教室名(地址)'，如 '图书馆B1(图书馆地下一层)'；"
+                  "若查询结果不含地址信息则只写教室名, 不要编造地址。"
+                  "时段按小时聚合时用整点区间表述(如 14:00-15:00), 不要编造分钟。")
     ans_prompt = (f"用户问题: {data.question}\n执行的SQL: {sql}\n"
                   f"查询结果(JSON, 空列表=无数据): {rows_text}\n请回答:")
     try:
@@ -1065,6 +1104,9 @@ def portal_trends(request: Request):
     r, u = _require_page(request)
     if r:
         return r
+    # 历史规律面向普通用户(选座/避峰参考), 管理员不需要
+    if u.get("role") == "admin":
+        return RedirectResponse("/portal/overview?denied=trends", status_code=302)
     return templates.TemplateResponse(request, "portal/trends.html",
                                       {"user": u, "active": "trends"})
 

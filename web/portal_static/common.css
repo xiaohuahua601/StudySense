@@ -213,11 +213,6 @@ tbody tr:hover { background: rgba(0,160,255,.07); }
 @keyframes msgIn { from { opacity: 0; transform: translateY(10px) scale(.97); } to { opacity: 1; transform: none; } }
 .msg.me { align-self: flex-end; background: linear-gradient(135deg, #0d5c9e, #0a4c86); border: 1px solid #1e6aad; border-bottom-right-radius: 4px; }
 .msg.ai { align-self: flex-start; background: rgba(16,35,63,.85); border: 1px solid #16355c; border-bottom-left-radius: 4px; }
-.msg.ai .sql-toggle { display: inline-block; margin-top: 8px; font-size: 11px; color: #5a7fb5; cursor: pointer; user-select: none; }
-.msg.ai .sql-toggle:hover { color: #00d4ff; }
-.msg.ai pre { display: none; margin-top: 8px; padding: 9px 11px; background: #060d1c; border-radius: 7px;
-  font-size: 11px; color: #7dc5ff; overflow-x: auto; border: 1px solid #132a4a; }
-.msg.ai pre.show { display: block; }
 .typing { align-self: flex-start; display: flex; gap: 5px; padding: 13px 16px; background: rgba(16,35,63,.85);
   border: 1px solid #16355c; border-radius: 13px; border-bottom-left-radius: 4px; }
 .typing i { width: 7px; height: 7px; border-radius: 50%; background: #00d4ff; animation: bounce 1.2s infinite; }

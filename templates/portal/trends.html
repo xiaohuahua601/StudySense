@@ -52,12 +52,16 @@ async function loadTrends() {
       <div class="g-time">${DOW_CN[g.dow]} ${String(g.hour).padStart(2, "0")}:00–${String(g.hour + 1).padStart(2, "0")}:00</div>
       <div class="g-free">${(g.free_rate * 100).toFixed(0)}%</div>
       <div class="g-sub">平均空座率 · ${g.samples} 天样本</div></div>`));
-  d.peak.forEach(g => cards.push(
+  // 前端兜底: 高峰时段排除已在黄金时段出现过的时段, 防止"既推荐又避开"
+  const goldenKeys = new Set(d.golden.map(g => `${g.dow}-${g.hour}`));
+  d.peak.forEach(g => {
+    if (goldenKeys.has(`${g.dow}-${g.hour}`)) return;
+    cards.push(
     `<div class="panel kpi gcard peak"><span class="g-rank">⚠️</span>
       <div class="k-label">高峰时段 · 避开</div>
       <div class="g-time">${DOW_CN[g.dow]} ${String(g.hour).padStart(2, "0")}:00–${String(g.hour + 1).padStart(2, "0")}:00</div>
       <div class="g-free">${(g.free_rate * 100).toFixed(0)}%</div>
-      <div class="g-sub">平均空座率 · ${g.samples} 天样本</div></div>`));
+      <div class="g-sub">平均空座率 · ${g.samples} 天样本</div></div>`)});
   gEl.innerHTML = cards.length ? cards.join("") :
     `<div class="empty" style="grid-column:1/-1">数据积累中, 至少需要一天的记录后才能给出时段推荐</div>`;
 

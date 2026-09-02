@@ -1,5 +1,5 @@
 services:
-  # ---------- 后端 API + 可视化大屏 + 管理门户(SSR) ----------
+  # ---------- 后端 API + 管理门户(SSR) ----------
   api:
     build: .
     container_name: studysense-api
@@ -15,9 +15,25 @@ services:
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
       TOKEN_SECRET: ${TOKEN_SECRET:-studysense-default-secret-change-me}
+      # 独立部署的仪表盘跨域白名单(来源 origin), 多个用逗号分隔
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8080}
     depends_on:
       db:
         condition: service_healthy
+    restart: unless-stopped
+
+  # ---------- 可视化大屏（nginx 纯静态, 可独立部署到班级大屏机器） ----------
+  dashboard:
+    build:
+      context: .
+      dockerfile: dashboard/Dockerfile
+    container_name: studysense-dashboard
+    ports:
+      - "8080:80"
+    environment:
+      # 大屏页面访问后端 API 的地址: 本机测试用 localhost;
+      # 部署到班级大屏时在 .env 改为服务器实际地址, 如 http://192.168.1.50:8000
+      API_BASE: ${DASHBOARD_API_BASE:-http://localhost:8000}
     restart: unless-stopped
 
   # ---------- MySQL 数据库 ----------

@@ -1,7 +1,9 @@
 {% extends "portal/base.html" %}
 {% block title %}占用总览 · StudySense{% endblock %}
 {% block main %}
-{% if request.query_params.get('denied') %}
+{% if request.query_params.get('denied') == 'trends' %}
+<div class="denied-bar">📅 历史规律面向普通用户（选座/避峰参考），管理员无需使用</div>
+{% elif request.query_params.get('denied') %}
 <div class="denied-bar">🚫 无权限访问管理页面, 已为您跳转到总览</div>
 {% endif %}
 <div class="kpis" id="kpis">
@@ -116,9 +118,6 @@ async function showRoomDetail(cam) {
     <label style="margin-top:18px">座位占用示意（按占用数从左至右填充 · 绿=占用 蓝=空闲）</label>
     <div style="position:relative">
       <div id="mSeatGrid" style="display:grid;gap:5px;grid-template-columns:repeat(auto-fill,minmax(15px,1fr))"></div>
-      <div id="seatTip" style="position:absolute;pointer-events:none;opacity:0;transition:opacity .15s;
-        background:rgba(12,27,49,.95);border:1px solid #1e4d80;border-radius:6px;
-        padding:4px 10px;font-size:12px;color:#d6ecff;white-space:nowrap;z-index:5"></div>
     </div>
     <label style="margin-top:18px">24 小时占用趋势</label>
     <div id="mTrend" style="height:220px"></div>
@@ -126,24 +125,13 @@ async function showRoomDetail(cam) {
       <button class="btn ghost sm" onclick="askAIAbout('${room.name}','${cam}')">🤖 问 AI 这间教室</button>
       <button class="btn sm" onclick="closeModal()">关闭</button>
     </div>`);
-  // 座位示意（未实现座位映射, 按占用数从左至右填充; 悬停放大+辉光+序号提示）
+  // 座位示意（未实现座位映射, 按占用数从左至右填充; 悬停放大+辉光, 不显示文字提示）
   const sg = $("#mSeatGrid");
   if (total) {
     sg.innerHTML = Array.from({ length: total }, (_, i) => {
       const on = i < occ;
-      return `<span class="sc${on ? " sc-on" : ""}" data-i="${i + 1}" data-on="${on ? 1 : 0}" style="aspect-ratio:1"></span>`;
+      return `<span class="sc${on ? " sc-on" : ""}" style="aspect-ratio:1"></span>`;
     }).join("");
-    sg.addEventListener("mousemove", e => {
-      const t = e.target.closest(".sc");
-      const tip = $("#seatTip");
-      if (!t) { tip.style.opacity = 0; return; }
-      tip.textContent = `座位 ${t.dataset.i} · ${t.dataset.on === "1" ? "占用" : "空闲"}`;
-      tip.style.opacity = 1;
-      const r = $("#modalBody").getBoundingClientRect();
-      tip.style.left = (e.clientX - r.left + 14) + "px";
-      tip.style.top = (e.clientY - r.top - 30) + "px";
-    });
-    sg.addEventListener("mouseleave", () => { $("#seatTip").style.opacity = 0; });
   }
   // 趋势图（接口返回 {points: [{ts, head_count, occupied_count}]}）
   api(`/api/history?hours=24&camera_id=${cam}`).then(d => {

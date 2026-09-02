@@ -43,9 +43,7 @@ async function sendQuestion(q, cam = null) {
   try {
     const r = await api("/api/ask", { method: "POST", body: JSON.stringify({ question: q, camera_id: cam }) });
     tip.remove();
-    addMsg("ai", `${r.answer.replace(/</g, "&lt;")}<br>
-      <span class="sql-toggle" onclick="this.nextElementSibling.classList.toggle('show')">▸ 查看 SQL</span>
-      <pre>${(r.sql || "").replace(/</g, "&lt;")}</pre>`);
+    addMsg("ai", r.answer.replace(/</g, "&lt;"));
   } catch (ex) {
     tip.remove();
     addMsg("ai", "⚠️ " + ex.message);
