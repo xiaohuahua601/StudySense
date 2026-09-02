@@ -503,8 +503,8 @@ uvicorn server:app --port 8000
 # 终端 2: 边缘采集（真实摄像头; 测试视频则 --source 换文件路径）
 python edge_agent.py --source 0 --camera-id room_201 --interval 30
 
-# 终端 3（可选, 本地开发工具）: Streamlit 模拟测试页
-streamlit run dashboard.py
+# 测试视频模拟（无摄像头时）
+python edge_agent.py --source media/test_room.mp4 --camera-id room_201 --interval 10
 ```
 
 打开：大屏 http://127.0.0.1:8000/ui/ ，门户 http://127.0.0.1:8000/portal/login 。
@@ -513,17 +513,17 @@ streamlit run dashboard.py
 
 ## 八、无实景测试方案
 
-没有真实自习室时的完整测试动线（也是开发期的主要验证方式）：
+没有真实自习室时的测试方式（也是开发期的主要验证方式）：
 
-> 模拟测试入口在 **dashboard.py**（Streamlit，本地开发工具，`streamlit run dashboard.py` 启动）——Docker 部署的门户/大屏不含此页，模拟数据同样会入库并实时驱动容器中的大屏与门户。
+> 旧版 Streamlit 模拟测试页（dashboard.py）已移除，直接用 **edge_agent 挂视频源** 即可完成同样的模拟——数据入库后实时驱动大屏与门户。
 
-1. **模拟测试页（dashboard.py） → 🎬 模拟测试**
-2. 选择目标教室（下拉任意已注册教室）
-3. 三种源任选：**上传视频**（页面上直接拖入 mp4）/ **本地路径** / **本机摄像头开关**（优先级最高，开着就覆盖视频路径）
-4. 调整上报间隔（5~60 秒）→ 「▶ 开始模拟」
-5. 页面显示边缘端实时画面（带检测框 + 跟踪 ID），数据按间隔入库
-6. **同时开大屏**观察联动：卡片人数跳动、曲线滑入新点、相对时间保持绿色"刚刚"
-7. 视频播完自动收尾（在场会话归档）；也可随时「⏹ 停止模拟」（直接终止 edge_agent 进程，即停即止）
+1. 启动后端 `uvicorn server:app --port 8000`
+2. 用测试视频驱动边缘采集链路（检测框 + 跟踪 ID 实时显示，数据按间隔入库）：
+   ```powershell
+   python edge_agent.py --source media/test_room.mp4 --camera-id room_201 --interval 10
+   ```
+3. **同时开大屏**（http://127.0.0.1:8000/ui/）观察联动：卡片人数跳动、曲线滑入新点、相对时间保持绿色"刚刚"
+4. 视频播完自动收尾（在场会话归档）；Ctrl+C 随时终止，即停即止
 
 测试视频来源：任何俯拍教室/图书馆/人群视频均可（CrowdHuman 的 val 图也能用于单帧测试）。
 
@@ -538,18 +538,18 @@ face_test/
 ├── head_detector.py         # 人头检测器: letterbox/ONNX 推理/分级阈值/NMS
 ├── tracker.py               # IOU+质心跟踪器: 轨迹确认/老化/会话归档
 ├── camera_guard.py          # 摄像头异常守卫: 遮挡/移动检测
-├── dashboard.py             # Streamlit 模拟测试页（本地开发工具, 非部署件）
 ├── web/index.html           # 可视化大屏（单文件, ECharts CDN）
 ├── web/portal_static/       # 管理门户公共静态资源（CSS/JS）
 ├── web/logo.svg             # 全站 Logo + favicon
 ├── templates/portal/        # 管理门户 SSR 模板（登录/总览/历史/AI/教室/用户 6 页）
-├── head_detect_1280.onnx   # 检测模型（精度优先）
-├── head_detect_960.onnx     # 检测模型（速度折中）
-├── convert_crowdhuman.py    # odgt→YOLO 数据转换（训练用）
-├── docker-compose.yml       # 一键编排: API(含门户SSR) + MySQL + Ollama
+├── dashboard/               # 大屏独立部署容器（nginx + gen-config.sh）
+├── models/                  # ONNX 检测模型（head_detect_1280 默认 / 960 速度折中 / face_detect 备用）
+├── media/                   # 测试视频（test_room.mp4）
+├── scripts/                 # 训练辅助脚本（convert_crowdhuman.py: odgt→YOLO 转换）
+├── docs/                    # 历史交接文档
+├── docker-compose.yml       # 一键编排: API(含门户SSR) + MySQL + Ollama + 大屏
 ├── Dockerfile               # API 服务镜像（FastAPI + Jinja2 模板）
 ├── .env.example             # 环境变量模板（复制为 .env 填密码/模型/密钥）
-├── test_room.mp4            # 测试视频
 ├── README.md                # 需求与技术文档（本文档）
 └── PROJECT_INTRO.md         # 项目详细介绍 + 面试要点
 ```

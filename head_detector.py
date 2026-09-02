@@ -6,8 +6,8 @@ HeadDetector: 人头检测模块（自习室座位监测系统核心检测器）
 解决了俯拍视角下人脸不可见、人脸检测失效的问题。
 
 用法:
-    detector = HeadDetector()                       # 默认 1280 模型
-    detector = HeadDetector("head_detect_960.onnx", input_size=960)
+    detector = HeadDetector()                                   # 默认 1280 模型
+    detector = HeadDetector("models/head_detect_960.onnx", input_size=960)
     results = detector.detect(frame)                # [(box, score), ...]
     frame = detector.draw(frame, results)
 """
@@ -20,7 +20,7 @@ import numpy as np
 import onnxruntime as ort
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_MODEL = os.path.join(BASE_DIR, "head_detect_1280.onnx")
+DEFAULT_MODEL = os.path.join(BASE_DIR, "models", "head_detect_1280.onnx")
 
 
 class HeadDetector:
