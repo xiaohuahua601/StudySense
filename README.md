@@ -2,6 +2,18 @@
 
 StudySense 帮助学生查看自习室当前人数和空座，也帮助管理员了解教室使用情况与摄像头状态。系统在教室端处理画面，只向服务端上报人数和在座会话数据；网页展示实时状态、历史趋势，并提供自然语言数据查询。
 
+## 运行截图
+
+以下截图来自本地运行的 StudySense。监控大屏中的数据由项目测试视频经边缘检测、上报和服务端统计生成。
+
+**实时监控大屏**：展示教室在线状态、人数、空座与占用趋势。
+
+![StudySense 实时监控大屏](docs/screenshots/dashboard-live.jpg)
+
+**管理门户**：提供登录入口与项目功能概览。
+
+![StudySense 管理门户登录页](docs/screenshots/portal-login.jpg)
+
 ## 一次数据更新如何完成
 
 1. [边缘采集端](edge_agent.py) 从摄像头或视频取帧，调用 [人头检测器](head_detector.py) 识别人数，并结合跟踪器估计在座时长、检查镜头异常。
@@ -492,7 +504,7 @@ GET /api/alerts?limit=5
 # 1. 准备环境变量
 Copy-Item .env.example .env    # 编辑: MYSQL_PASSWORD / OLLAMA_MODEL / TOKEN_SECRET
 
-# 2. 拉起 3 容器（api + mysql + ollama; 门户 SSR 已并入 api 容器）
+# 2. 启动 API、大屏、MySQL 与 Ollama；门户由 API 服务提供
 docker compose up -d --build
 
 # 3. （可选）拉取 AI 模型
@@ -504,7 +516,7 @@ docker exec studysense-ollama ollama pull qwen2.5:1.5b
 | 页面 | 地址 | 说明 |
 |---|---|---|
 | **管理门户** | http://localhost:8000/portal/login | SSR 多页应用；初始账号见服务端初始化逻辑，部署后需修改凭据 |
-| **可视化大屏** | http://localhost:8000/ui | 挂墙监控 |
+| **可视化大屏** | http://localhost:8080/ | 挂墙监控 |
 | **API 文档** | http://localhost:8000/docs | Swagger |
 
 MySQL 映射到宿主机 **3307**（避开本机 3306）；Ollama 直接挂载宿主机模型目录，已有模型免二次下载。
